@@ -1,4 +1,16 @@
 <!doctype html>
+<!--
+  WORLD RADIO - index.html
+  Maintenance guide (original feature logic and integrations preserved)
+  1. Document head and base theme styles
+  2. Main globe / map interface and navigation
+  3. Shared panels and feature views
+  4. Core map, radio, satellite, aircraft and search logic
+  5. News, weather, airport and SDR integrations
+  6. TV / IPTV styles, view markup, playlists and player logic
+  External local assets (Leaflet, Three.js, satellite.js, HLS and SDR page)
+  remain referenced by their original filenames and must stay beside this file.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
@@ -599,7 +611,7 @@
     <div class="ld-brand">
       <h1 class="ld-title"><span class="ld-gl">🌍</span>World<span>Radio</span></h1>
       <p class="ld-tag">Live radio, HF receivers, aviation and weather — worldwide.</p>
-      <span id="ldBuild" class="ld-ver">v2.1110</span>
+      <span id="ldBuild" class="ld-ver">v2.1126</span>
     </div>
 
     <div class="ld-stats">
@@ -5594,14 +5606,116 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   .tv-menu .row .rn{flex:1;color:var(--txt);font-size:13px;line-height:1.25}
   .tv-menu .row .x{color:var(--dim);font-size:14px;padding:2px 6px}
   .tv-menu .row:active{background:var(--panel)}
-  .tv-ch{position:relative}
+  .tv-ch{border:1.5px solid rgba(255,255,255,.18);background:var(--panel);border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
   .tv-ch .st{position:absolute;top:6px;right:6px;font-size:15px;line-height:1;color:#ffc700;background:rgba(0,0,0,.5);border-radius:7px;padding:2px 5px;text-shadow:0 0 3px #000}
   .tv-ch .st.off{color:#778}
-  #tvList{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;padding:6px 12px}
-  #tvList .tv-ch{border:1px solid var(--line);background:var(--panel);border-radius:11px;padding:8px;display:flex;flex-direction:column;gap:6px;overflow:hidden}
-  #tvList .tv-ch img{width:100%;height:54px;object-fit:cover;background:#000;border-radius:7px}
-  #tvList .tv-ch span{font-size:11px;line-height:1.25;color:var(--txt);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  #tvList .tv-ch:active{transform:scale(.98)}
+  /* Netflix-style TV channel cards: responsive grid, large artwork, clear labels */
+  #tvList{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+    align-content:start;
+    gap:14px;
+    padding:12px;
+  }
+  #tvList .tv-ch{
+    position:relative;
+    display:flex;
+    flex-direction:column;
+    align-items:stretch;
+    gap:9px;
+    width:100%;
+    min-width:0;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:10px;
+    overflow:hidden;
+    cursor:pointer;
+    transition:transform .18s ease,border-color .18s ease,background .18s ease;
+  }
+  #tvList .tv-ch img{
+    display:block;
+    width:100%;
+    height:125px;
+    flex:0 0 auto;
+    object-fit:cover;
+    border-radius:8px;
+    background:#000;
+  }
+  #tvList .tv-ch .tv-nm{
+    width:100%;
+    color:var(--txt);
+    font-size:14px;
+    line-height:1.35;
+    font-weight:650;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  #tvList .tv-ch .st{
+    position:absolute;
+    top:16px;
+    right:16px;
+    margin:0;
+    font-size:14px;
+    background:rgba(0,0,0,.62);
+    border-radius:7px;
+    padding:3px 6px;
+  }
+  #tvList .tv-ch:hover{
+    background:var(--panel);
+    border-color:rgba(53,224,255,.42);
+    transform:translateY(-2px);
+  }
+  #tvList .tv-ch:active{transform:scale(.985)}
+  /* Layout safety overrides: keep cards tall, logos fully visible, and
+     the grid at a readable width on both desktop and phones. */
+  #tvList{
+    width:100%;
+    max-width:1400px;
+    margin:0 auto;
+    grid-template-columns:repeat(auto-fill,minmax(170px,1fr));
+    grid-auto-rows:minmax(158px,auto);
+    align-items:stretch;
+    justify-items:stretch;
+  }
+  #tvList .tv-ch{
+    box-sizing:border-box;
+    min-height:158px !important;
+    height:auto !important;
+    align-self:stretch;
+    justify-content:flex-start;
+  }
+  #tvList .tv-ch img{
+    display:block !important;
+    box-sizing:border-box;
+    width:100% !important;
+    height:112px !important;
+    min-height:112px !important;
+    max-height:112px !important;
+    flex:0 0 112px !important;
+    object-fit:contain !important;
+    object-position:center;
+    padding:6px;
+    background:#080d16;
+  }
+  @media(max-width:480px){
+    #tvList{
+      width:100%;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      grid-auto-rows:minmax(142px,auto);
+      gap:10px;
+      padding:8px;
+    }
+    #tvList .tv-ch{min-height:142px !important;padding:8px;border-radius:10px}
+    #tvList .tv-ch img{
+      height:94px !important;
+      min-height:94px !important;
+      max-height:94px !important;
+      flex-basis:94px !important;
+    }
+    #tvList .tv-ch .tv-nm{font-size:13px}
+  }
   #tvPlayerWrap{position:fixed;inset:0;background:#000;z-index:40;display:flex;flex-direction:column}
   #tvPlayerWrap.hide{display:none}
   #tvPlayerWrap video{flex:1;width:100%;background:#000;object-fit:contain}
@@ -5790,10 +5904,25 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
       var s = isChFav(c.url) >= 0;
       h += '<button class="tv-ch" data-i="'+channels.indexOf(c)+'">'
          + '<img loading="lazy" src="' + (c.icon ? esc(c.icon) : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="50" height="30"><rect width="50" height="30" fill="%23111"/><text x="3" y="20" font-size="11" fill="%2399f">TV</text></svg>') + '">'
-         + '<span class="st '+(s?'':'off')+'" title="favourite">'+(s?'★':'☆')+'</span>'
-         + '<span>'+esc(c.name)+'</span></button>';
+         + '<span class="tv-nm">'+esc(c.name)+'</span>'
+         + '<span class="st '+(s?'':'off')+'" title="favourite">'+(s?'★':'☆')+'</span></button>';
     });
     el.innerHTML = h || '<div style="color:var(--dim);padding:20px 12px;font-size:12px">No channels found — check the URL.</div>';
+    // Some playlist logo URLs are dead or blocked; show a clean TV placeholder
+    // instead of the browser's broken-image icon.
+    Array.prototype.forEach.call(el.querySelectorAll('.tv-ch img'), function(img){
+      img.addEventListener('error', function(){
+        img.onerror = null;
+        img.removeAttribute('src');
+        img.style.objectFit = 'contain';
+        img.style.padding = '18px';
+        img.style.opacity = '.75';
+        img.alt = 'TV logo unavailable';
+        img.src = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 120"><rect width="240" height="120" rx="12" fill="#111b2a"/><rect x="86" y="25" width="68" height="48" rx="7" fill="none" stroke="#35e0ff" stroke-width="5"/><path d="M105 88h30M120 73v15" stroke="#35e0ff" stroke-width="5" stroke-linecap="round"/><text x="120" y="108" text-anchor="middle" font-family="Arial" font-size="13" fill="#9bb4d0">TV LOGO</text></svg>'
+        );
+      }, {once:true});
+    });
     el.onclick = function(e){
       var b = e.target.closest('button[data-i]'); if (!b) return;
       var c = channels[+b.dataset.i]; if(!c) return;
