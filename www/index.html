@@ -599,7 +599,7 @@
     <div class="ld-brand">
       <h1 class="ld-title"><span class="ld-gl">🌍</span>World<span>Radio</span></h1>
       <p class="ld-tag">Live radio, HF receivers, aviation and weather — worldwide.</p>
-      <span id="ldBuild" class="ld-ver">v2.1107</span>
+      <span id="ldBuild" class="ld-ver">v2.1110</span>
     </div>
 
     <div class="ld-stats">
@@ -5561,7 +5561,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
 <script src="sdr_page.js"></script>
 <style>
   /* ---------- TV / IPTV view ---------- */
-  #tvView{flex-direction:column;background:#05070d;overflow-y:auto;padding:0 0 22px}
+  #tvView{flex-direction:column;background:#05070d;overflow:hidden;padding:0 0 22px;min-height:0}
   #tvView .tvv-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#0a0e14;z-index:5}
   #tvView .tvv-title{font-weight:700;font-size:14px;color:var(--txt)}
   #tvView .mini{width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--txt);font-size:14px;place-items:center;display:grid}
@@ -5582,6 +5582,9 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   #tvFavs .tvf .x:active{opacity:1}
   #tvFavName{width:104px;flex:0 0 auto;background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--txt);padding:9px 10px;font-size:12px}
   #tvFavSave{border:1px solid rgba(255,199,0,.5);background:rgba(255,199,0,.12);color:#ffc700;padding:9px 12px;border-radius:9px;font-weight:700;font-size:12px}
+  /* only the channel grid scrolls; header/setup/search/categories always visible */
+  #tvView .tvv-head,#tvView #tvSetup,#tvView #tvSearchRow,#tvView #tvCats{flex:0 0 auto}
+  #tvList{flex:1 1 auto;min-height:0;overflow-y:auto}
   .tv-menu{position:fixed;inset:0;background:#05070d;z-index:55;overflow-y:auto;padding:0 0 20px}
   /* overlays must actually hide: the app only hides `.panel.hide` */
   .tv-menu.hide, #tvPlayerWrap.hide, #tvView.hide{display:none!important}
@@ -5859,37 +5862,65 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   }
   window.tvShow = show;
 
-  /* ---------- Countries browser (iptv-org per-country playlists) ---------- */
-  var tvCountries = [
+  /* ---------- Countries & regions browser (iptv-org; live full list) ---------- */
+  var tvCountriesFallback = [
     {c:'US',n:'United States'},{c:'CA',n:'Canada'},{c:'MX',n:'Mexico'},{c:'DO',n:'Dominican Rep.'},{c:'PR',n:'Puerto Rico'},{c:'CR',n:'Costa Rica'},{c:'PA',n:'Panama'},{c:'CO',n:'Colombia'},{c:'CL',n:'Chile'},{c:'PE',n:'Peru'},{c:'VE',n:'Venezuela'},{c:'AR',n:'Argentina'},{c:'BR',n:'Brazil'},
     {c:'GB',n:'United Kingdom'},{c:'DE',n:'Germany'},{c:'FR',n:'France'},{c:'ES',n:'Spain'},{c:'IT',n:'Italy'},{c:'PT',n:'Portugal'},{c:'NL',n:'Netherlands'},{c:'BE',n:'Belgium'},{c:'IE',n:'Ireland'},{c:'SE',n:'Sweden'},{c:'NO',n:'Norway'},{c:'FI',n:'Finland'},{c:'DK',n:'Denmark'},{c:'PL',n:'Poland'},{c:'CZ',n:'Czechia'},{c:'GR',n:'Greece'},{c:'CH',n:'Switzerland'},{c:'AT',n:'Austria'},{c:'RO',n:'Romania'},{c:'HU',n:'Hungary'},{c:'UA',n:'Ukraine'},{c:'RU',n:'Russia'},{c:'TR',n:'Turkey'},
     {c:'CN',n:'China'},{c:'JP',n:'Japan'},{c:'KR',n:'South Korea'},{c:'TH',n:'Thailand'},{c:'VN',n:'Vietnam'},{c:'PH',n:'Philippines'},{c:'MY',n:'Malaysia'},{c:'SG',n:'Singapore'},{c:'ID',n:'Indonesia'},{c:'IN',n:'India'},{c:'PK',n:'Pakistan'},{c:'BD',n:'Bangladesh'},{c:'HK',n:'Hong Kong'},{c:'TW',n:'Taiwan'},{c:'AU',n:'Australia'},{c:'NZ',n:'New Zealand'},
     {c:'EG',n:'Egypt'},{c:'MA',n:'Morocco'},{c:'NG',n:'Nigeria'},{c:'SA',n:'Saudi Arabia'},{c:'AE',n:'UAE'},{c:'IL',n:'Israel'},{c:'QA',n:'Qatar'},{c:'ZA',n:'South Africa'}
   ];
+  var tvRegions = [
+    {c:'WW',n:'Worldwide'},{c:'AMER',n:'Americas'},{c:'NORAM',n:'North America'},{c:'SOUTHAM',n:'South America'},{c:'CARIB',n:'Caribbean'},{c:'LATAM',n:'Latin America'},{c:'LAC',n:'Latin America & Caribbean'},{c:'CENAMER',n:'Central America'},{c:'NAM',n:'Northern America'},{c:'HISPAM',n:'Hispanic America'},
+    {c:'EUR',n:'Europe'},{c:'EU',n:'European Union'},{c:'CEE',n:'Central & Eastern Europe'},{c:'WER',n:'Western Europe'},{c:'NEU',n:'Northern Europe'},{c:'SER',n:'Southern Europe'},{c:'CEU',n:'Central Europe'},{c:'NORD',n:'Nordics'},{c:'BENELUX',n:'Benelux'},{c:'BALKAN',n:'Balkan'},
+    {c:'ASIA',n:'Asia'},{c:'EAS',n:'East Asia'},{c:'SAS',n:'South Asia'},{c:'SEA',n:'Southeast Asia'},{c:'CAS',n:'Central Asia'},{c:'WAS',n:'West Asia'},{c:'APAC',n:'Asia-Pacific'},{c:'ASEAN',n:'ASEAN'},{c:'MIDEAST',n:'Middle East'},{c:'MENA',n:'Middle East & N. Africa'},{c:'GCC',n:'Gulf Cooperation Council'},{c:'ARAB',n:'Arab world'},
+    {c:'AFR',n:'Africa'},{c:'EAF',n:'East Africa'},{c:'WAF',n:'West Africa'},{c:'SAF',n:'Southern Africa'},{c:'SSA',n:'Sub-Saharan Africa'},{c:'MAGHREB',n:'Maghreb'},
+    {c:'OCE',n:'Oceania'},{c:'EMEA',n:'Europe / Middle East / Africa'},{c:'CIS',n:'CIS countries'},{c:'UN',n:'United Nations'}
+  ];
   function tvFlag(c){ c=c.toUpperCase(); var o=''; for(var i=0;i<c.length;i++) o+=String.fromCodePoint(127397+c.charCodeAt(i)); return o; }
-  function tvCountryURL(c){ return 'https://iptv-org.github.io/iptv/countries/'+c.toLowerCase()+'.m3u'; }
+  var tvAll = null; // { regions:[], countries:[{c,f,n}] } cached full list
   function tvRenderCountries(q){
     q=(q||'').toLowerCase().trim();
-    var el=$('tvCountryList'), h='';
-    if(!q || 'asia'.indexOf(q)>=0){
-      h += '<div class="row" data-u="https://iptv-org.github.io/iptv/regions/asia.m3u"><span style="font-size:17px;width:26px">🌏</span><span class="rn">Asia — all countries</span></div>';
-    }
-    tvCountries.forEach(function(co){
-      if(q && co.n.toLowerCase().indexOf(q)<0) return;
-      h += '<div class="row" data-u="'+tvCountryURL(co.c)+'"><span style="font-size:17px;width:26px">'+tvFlag(co.c)+'</span><span class="rn">'+esc(co.n)+'</span></div>';
+    var data = tvAll || { regions: tvRegions, countries: tvCountriesFallback.map(function(x){ return {c:x.c, f:tvFlag(x.c), n:x.n}; }) };
+    var el = $('tvCountryList'), h = '', rh = '', ch = '';
+    data.regions.forEach(function(r){
+      if(q && r.n.toLowerCase().indexOf(q)<0) return;
+      rh += '<div class="row" data-k="regions" data-c="'+r.c+'"><span style="font-size:17px;width:26px">🌐</span><span class="rn">'+esc(r.n)+'</span></div>';
     });
-    el.innerHTML = h || '<div class="row"><span class="rn" style="color:var(--dim)">No country found.</span></div>';
-    el.onclick=function(e){
-      var row=e.target.closest('.row'); if(!row) return;
-      var u=row.dataset.u; if(!u) return;
-      $('tvSrc').value=u; tvCountriesClose(); load(u);
+    if(rh) h += '<div class="tv-menu-sec">🌎 Regions</div>' + rh;
+    data.countries.forEach(function(co){
+      if(q && co.n.toLowerCase().indexOf(q)<0) return;
+      ch += '<div class="row" data-k="countries" data-c="'+co.c+'"><span style="font-size:17px;width:26px">'+esc(co.f || tvFlag(co.c))+'</span><span class="rn">'+esc(co.n)+'</span></div>';
+    });
+    if(ch) h += '<div class="tv-menu-sec">🌍 Countries</div>' + ch;
+    el.innerHTML = h || '<div class="row"><span class="rn" style="color:var(--dim)">No region or country found.</span></div>';
+    el.onclick = function(e){
+      var row = e.target.closest('.row'); if(!row) return;
+      var c = row.dataset.c; if(!c) return;
+      var kind = row.dataset.k === 'regions' ? 'regions' : 'countries';
+      var u = 'https://iptv-org.github.io/iptv/' + kind + '/' + c.toLowerCase() + '.m3u';
+      $('tvSrc').value = u; tvCountriesClose(); load(u);
     };
   }
-  function tvCountriesOpen(){ $('tvMenuList').classList.add('hide'); tvRenderCountries(''); $('tvCountries').classList.remove('hide'); var s=$('tvCountrySearch'); if(s) s.value=''; }
+  function tvLoadAll(){
+    fetchText('https://iptv-org.github.io/api/countries.json').then(function(t){
+      if(!t) return;
+      try{
+        var arr = JSON.parse(t);
+        if(Array.isArray(arr) && arr.length){
+          tvAll = { regions: tvRegions, countries: arr.map(function(x){ return {c:x.code, f:(x.flag||''), n:x.name}; }) };
+          try{ localStorage.setItem('wr_tv_countries', JSON.stringify(arr)); }catch(e){}
+        }
+      }catch(e){}
+      if ($('tvCountries') && !$('tvCountries').classList.contains('hide')) tvRenderCountries($('tvCountrySearch').value);
+    }).catch(function(){});
+  }
+  function tvCountriesOpen(){ $('tvMenuList').classList.add('hide'); tvRenderCountries(''); $('tvCountries').classList.remove('hide'); var s=$('tvCountrySearch'); if(s) s.value=''; if(!tvAll) tvLoadAll(); }
   function tvCountriesClose(){ $('tvCountries').classList.add('hide'); }
   $('tvCountriesBtn').onclick = tvCountriesOpen;
   $('tvCountriesClose').onclick = tvCountriesClose;
   $('tvCountrySearch').oninput = function(){ tvRenderCountries(this.value); };
+  (function(){ try{ var j = JSON.parse(localStorage.getItem('wr_tv_countries') || 'null'); if(j && Array.isArray(j) && j.length) tvAll = { regions: tvRegions, countries: j.map(function(x){ return {c:x.code, f:(x.flag||''), n:x.name}; }) }; }catch(e){} })();
+
 
   /* ---------- TV playlists & favourite channels (device-local) ---------- */
   var tvFavs = [], tvCurFav = -1, tvChFavs = [];
