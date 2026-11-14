@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- World Radio app icon: a globe with signal arcs, matching the radio-set and
+     broadcast-mast glyphs the app draws on its own map. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="sky" cx="35%" cy="28%" r="80%">
+      <stop offset="0%"   stop-color="#12283d"/>
+      <stop offset="100%" stop-color="#05070d"/>
+    </radialGradient>
+    <clipPath id="globeClip">
+      <circle cx="128" cy="140" r="74"/>
+    </clipPath>
+  </defs>
+
+  <rect width="256" height="256" rx="56" fill="url(#sky)"/>
+
+  <!-- globe -->
+  <circle cx="128" cy="140" r="74" fill="#0b1a29" stroke="#35e0ff" stroke-width="5"/>
+  <g clip-path="url(#globeClip)" fill="none" stroke="#35e0ff" stroke-width="3" opacity="0.75">
+    <ellipse cx="128" cy="140" rx="28" ry="74"/>
+    <ellipse cx="128" cy="140" rx="56" ry="74"/>
+    <line x1="54" y1="140" x2="202" y2="140"/>
+    <path d="M62 104 H194"/>
+    <path d="M62 176 H194"/>
+  </g>
+
+  <!-- signal arcs rising from the globe, same idea as the map glyph -->
+  <g fill="none" stroke="#00ff88" stroke-width="7" stroke-linecap="round">
+    <path d="M96 74 A 46 46 0 0 1 160 74"/>
+    <path d="M74 54 A 78 78 0 0 1 182 54"/>
+    <path d="M52 34 A 110 110 0 0 1 204 34"/>
+  </g>
+  <circle cx="128" cy="88" r="12" fill="#ff5cf0" stroke="#ffffff" stroke-width="4"/>
+</svg>
