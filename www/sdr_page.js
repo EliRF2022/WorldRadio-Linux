@@ -2093,7 +2093,7 @@
       "#sdrZoomRow{margin:2px 0!important;font-size:11px!important;min-height:0!important}" +
       "#sdrZoomRow *{line-height:1.1!important}" +
       "#sdrView .sdr-meter{margin:2px 0 0!important;padding:2px 0!important;gap:6px!important;min-height:0!important}" +
-      "#sdrView .sdr-track{height:9px!important}" +
+      "#sdrView .sdr-track{height:27px!important}" +
       ".sdr-sval{font-size:14px!important}#sdrDbm{font-size:10.5px!important}" +
       "#sdrView .sdr-status{margin:1px 0 0!important;padding:1px 0!important;font-size:11.5px!important;line-height:1.15!important;min-height:0!important}" +
       "#sdrAudioHint{margin:2px 0!important;padding:2px 8px!important;font-size:11.5px!important}" +
@@ -2131,6 +2131,13 @@
       "#sdrConnBtn{height:28px!important;font-size:12px!important}" +
       "#sdrSpecRuler{height:15px!important}" +
       "}" +
+      /* ---- S-meter as a discrete LED bar (31 segments, blue on dark) ---- */
+      "#sdrView .sdr-track{height:27px!important;border-radius:5px!important;background:#141a21!important;" +
+      "border:1px solid #232c36!important;overflow:hidden!important}" +
+      "#sdrSmeterBar{opacity:0!important}" +
+      "#sdrLeds{position:absolute;inset:0;display:flex;gap:1px;padding:1px;pointer-events:none;z-index:2}" +
+      "#sdrLeds i{flex:1 1 0;min-width:0;background:#1c232b;border-radius:1px}" +
+      "#sdrLeds i.on{background:#00aef0;box-shadow:0 0 5px rgba(0,174,240,.6)}" +
       "";
   }
   /* The ☰ sat at the far right of the top row with margin-left:auto, which wrapped it
@@ -2246,6 +2253,59 @@
                         trackLeft: track.offsetLeft, trackW: tw, insetUsed: Math.round(insetUsed),
                         meterContentW: Math.round(contentW) };
   }
+  
+  /* ---------- S-meter LED bar: 31 discrete segments, blue on dark ----------
+     The reference is a segmented LED bargraph: 31 tall thin segments, lit ones bright blue
+     (#00aef0), unlit near-black, with white S labels and red +dB labels. The app's own
+     #sdrSmeterBar still receives the real value from the radio, so the LEDs are driven from ITS
+     width - the app's telemetry path is left completely alone. */
+  var LED_COUNT = 31, LED_TARGET_W = 10;
+  function ledCountFor(track) {
+    var tw = track.clientWidth || 0;
+    var n = Math.round(tw / LED_TARGET_W);
+    return Math.max(18, Math.min(80, n));      /* ~31 on a phone, more on a wide screen */
+  }
+  function buildLeds(n) {
+    var track = document.querySelector("#sdrView .sdr-track");
+    if (!track) return;
+    var old = track.querySelector("#sdrLeds");
+    if (old) old.parentNode.removeChild(old);
+    var box = document.createElement("div");
+    box.id = "sdrLeds";
+    var h = "";
+    for (var i = 0; i < n; i++) h += "<i></i>";
+    box.innerHTML = h;
+    track.appendChild(box);
+    LED_COUNT = n;
+  }
+  function setLeds(pct) {
+    var box = document.querySelector("#sdrLeds");
+    if (!box) return;
+    pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+    var n = Math.round(pct / 100 * LED_COUNT);
+    var kids = box.children;
+    for (var i = 0; i < kids.length; i++) {
+      var want = i < n;
+      if (want !== (kids[i].className === "on")) kids[i].className = want ? "on" : "";
+    }
+    dbg.leds = { pct: Math.round(pct), lit: n, of: LED_COUNT };
+    dbg.ledTest = setLeds;   /* test hook */
+  }
+  function syncLeds() {
+    var bar = el("sdrSmeterBar"), track = document.querySelector("#sdrView .sdr-track");
+    if (!bar || !track) return;
+    var tw = track.clientWidth || 0;
+    if (!tw) return;
+    if (ledCountFor(track) !== LED_COUNT && track.querySelector("#sdrLeds")) buildLeds(ledCountFor(track));
+    var bw = bar.getBoundingClientRect().width || 0;   /* the app keeps this width live */
+    setLeds((bw / tw) * 100);
+    dbg.leds.w = Math.round(tw);
+  }
+  function startLeds() {
+    buildLeds(ledCountFor(document.querySelector("#sdrView .sdr-track")));
+    syncLeds();
+    if (!window.__ledTimer) window.__ledTimer = setInterval(syncLeds, 100);
+  }
   function buildSmeterScale() {
     var meter = document.querySelector("#sdrView .sdr-meter");
     var track = document.querySelector("#sdrView .sdr-track");
@@ -2264,14 +2324,16 @@
       var tick = document.createElement("b");
       tick.setAttribute("style", "position:absolute;top:0;left:0;width:1px;" +
         "height:" + (tk[1] === 0 || tk[1] === 9 || tk[1] === 60 ? "4" : "2") + "px;" +
-        "background:rgba(214,230,246,.55);transform:translateX(-50%)");
+        "background:" + (tk[1] >= 20 ? "rgba(255,90,90,.85)" : "rgba(214,230,246,.6)") +
+        ";transform:translateX(-50%)");
       var lab = document.createElement("i");
       /* "S0" at 0% and "+60" at 100% were half outside the meter box (the owner circled
          them spilling out of the frame): the outermost labels anchor to the edges instead
          of being centred on their tick. */
       /* positions are set in px by alignSmeterScale (against the bar, inside the wider strip) */
       lab.setAttribute("style", "position:absolute;top:5px;transform:translateX(-50%);" +
-        "font-style:normal;white-space:nowrap");
+        "font-style:normal;white-space:nowrap;font-weight:700;" +
+        "color:" + (tk[1] >= 20 ? "#ff5a5a" : "rgba(232,240,248,.95)"));
       lab.textContent = tk[0];
       wrap.appendChild(tick);
       wrap.appendChild(lab);
@@ -2282,6 +2344,7 @@
     wrap.appendChild(mark);
     meter.appendChild(wrap);
     alignSmeterScale();
+    if (!el("sdrLeds")) startLeds(); else syncLeds();
     dbg.sscale = { count: wrap.querySelectorAll("i").length, pct: S_TICKS.map(function (x) {
       return [x[0], +tickPct(x[1]).toFixed(1)]; }) };
   }
@@ -2996,7 +3059,7 @@ function drawSmeter() {
     testing: { queueFft: function (arr) { queueFft(arr); },
                resetMeters: function () { dbg.zc = 0; dbg.zcN = 0; dbg.pcmPow = 0; dbg.pcmN = 0;
                                             dbg.pushed = 0; dbg.pushedSamples = 0; },
-               rateAcceptable: rateAcceptable, rdsUpdate: rdsUpdate, setModeSel: setModeSel,
+               rateAcceptable: rateAcceptable, rdsUpdate: rdsUpdate, setModeSel: setModeSel, ledSet: setLeds,
                favAdd: favAdd, favRemove: favRemove, favList: favList, favRender: favRender,
                favHitTest: favHitTest, favSaveRow: favSaveRow, drawFavs: drawFavs },
     onShow: function () {
