@@ -345,6 +345,14 @@
   .bnav .ic{font-size:18px;line-height:1}
   .bnav.on{color:var(--txt);background:rgba(53,224,255,.10)}
   .bnav:active{transform:scale(.93)}
+  /* the app's only hide rule is `.panel.hide` - a bar without this stays visible */
+  #bottomnav.hide{display:none!important}
+  /* Reserve the bar's strip so no view hides behind it (Android instead shrinks
+     the WebView itself, which is why its bar needs nothing). */
+  html.pnavon .panel, html.pnavon .landing, html.pnavon #ft8View,
+  html.pnavon .tv-menu, html.pnavon #tvPlayerWrap, html.pnavon #wcPlayerWrap,
+  html.pnavon .fsheet, html.pnavon #sheet, html.pnavon .sdr-sheet{
+    bottom:calc(62px + var(--safe-b)) !important}
   body{padding-bottom:calc(62px + var(--safe-b))}
 
   /* ---------- news + weather panels ---------- */
@@ -611,7 +619,7 @@
     <div class="ld-brand">
       <h1 class="ld-title"><span class="ld-gl">🌍</span>World<span>Radio</span></h1>
       <p class="ld-tag">Live radio, HF receivers, aviation and weather — worldwide.</p>
-      <span id="ldBuild" class="ld-ver">v2.1126</span>
+      <span id="ldBuild" class="ld-ver">v2.1190</span>
     </div>
 
     <div class="ld-stats">
@@ -630,10 +638,6 @@
       <button class="ld-card" id="ldMap">
         <span class="ld-ico">🗺️</span><b>Map</b>
         <i>Every station, receiver and satellite on a flat world map</i>
-      </button>
-      <button class="ld-card" id="ldGlobe">
-        <span class="ld-ico">🌐</span><b>Globe</b>
-        <i>Spin the Earth and tap a dot to listen</i>
       </button>
       <button class="ld-card" id="ldNews">
         <span class="ld-ico">📰</span><b>News</b>
@@ -659,7 +663,8 @@
       </button>
     </div>
 
-    <button class="ld-card wide" id="ldTvCard"><span class="ld-ico">📺</span><div><b>TV / IPTV</b><i>Watch your streams</i></div></button>
+    <button class="ld-card wide" id="ldWebcams"><span class="ld-ico">&#128247;</span><div><b>Webcams</b><i>Live traffic &amp; city cameras — California, London</i></div></button>
+<button class="ld-card wide" id="ldTvCard"><span class="ld-ico">📺</span><div><b>TV / IPTV</b><i>Watch your streams</i></div></button>
     <p class="ld-foot">Tap a card to begin · map, weather and radio lists work offline</p>
     <p class="ld-credit">Created by <b>Eric · KA3KDL</b> <span>(EliRF2022)</span></p>
   </div>
@@ -681,6 +686,7 @@
     <button id="viewAtc"   class="view">ATC</button>
     <button id="viewSdr"   class="view">SDR</button>
     <button id="viewTv" class="view">TV</button>
+    <button id="viewWebcam" class="view">Webcams</button>
   </div>
   <div class="chips">
     <button id="chipRadio" class="chip on">📻 Radio <i id="cRadio">0</i></button>
@@ -746,6 +752,11 @@
   .smode{background:transparent;border:1px solid transparent;color:#cfd8e3;font-size:.86rem;
     font-weight:600;letter-spacing:.5px;padding:8px 13px;border-radius:18px;cursor:pointer;}
   .smode.on{background:#00e5ff;border-color:#00e5ff;color:#04121a;font-weight:800;}
+.sdr-more{background:transparent;border:1px solid rgba(207,216,227,.35);color:#cfd8e3;
+    font-size:.84rem;font-weight:600;letter-spacing:.5px;padding:8px 10px;border-radius:18px;
+    cursor:pointer;max-width:150px;}
+.sdr-more:focus{outline:none;border-color:#00e5ff;}
+.sdr-more option{background:#0a1018;color:#cfd8e3;}
   .sdr-scale{display:flex;justify-content:space-between;align-items:center;font-size:.66rem;
     color:#8a8f98;padding:0 2px;}
   .sdr-axis{color:#3a3f4a;text-transform:uppercase;letter-spacing:1.5px;}
@@ -894,7 +905,7 @@
   <div id="sdrModes" class="sdr-modes"></div>
 
   <div class="sdr-scale">
-    <span id="sdrScaleL">—</span><span class="sdr-axis">spectrum</span><span id="sdrScaleR">—</span>
+    <span id="sdrScaleL">—</span><span class="sdr-axis">tap the waterfall to tune</span><span id="sdrScaleR">—</span>
   </div>
   <canvas id="sdrSpectrum" class="sdr-spec"></canvas>
   <canvas id="sdrWater" class="sdr-water"></canvas>
@@ -1069,6 +1080,17 @@
   <div class="pop-h">Globe layer</div>
   <div id="layerList"></div>
 </div>
+
+<!-- Pinned bottom bar for the desktop / web build. The Android app draws its own
+     native bar (activity_main.xml), so this one hides itself there. -->
+<nav id="bottomnav" class="hide">
+  <button class="bnav" data-nav="back"><span class="ic">◀</span>BACK</button>
+  <button class="bnav" data-nav="home"><span class="ic">🏠</span>HOME</button>
+  <button class="bnav" data-nav="map"><span class="ic">🗺️</span>MAP</button>
+  <button class="bnav" data-nav="news"><span class="ic">📰</span>NEWS</button>
+  <button class="bnav" data-nav="wx"><span class="ic">🌤️</span>WEATHER</button>
+  <button class="bnav" data-nav="atc"><span class="ic">✈️</span>ATC</button>
+</nav>
 
 <div id="sheet" class="hide">
   <div class="sh-head"><span id="shType" class="tag r">Radio</span>
@@ -2736,6 +2758,7 @@ let viewMode = 'map';
 function setView(v){
   if (v === 'globe') v = 'map';
   viewMode = v;
+  sceneActive = (v === 'map' || v === 'globe');   /* nothing else draws the 3D scene */
   const isMap = v === 'map', isGlobe = v === 'globe', isHome = v === 'home';
   const bare = !isMap && !isGlobe;
   mapMode = isMap;
@@ -2747,15 +2770,17 @@ function setView(v){
   $('atcView').classList.toggle('hide', v !== 'atc');
   $('sdrView').classList.toggle('hide', v !== 'sdr');
   if ($('tvView')) $('tvView').classList.toggle('hide', v !== 'tv');
+  if ($('wcView')) $('wcView').classList.toggle('hide', v !== 'webcam');
   /* leaving the airport view always closes any open airport detail */
   if (v !== 'atc') closeAirport();
   $('top').classList.toggle('bare', bare);
-  ['viewMap','viewNews','viewWx','viewAtc','viewSdr','viewTv'].forEach(id =>
+  ['viewMap','viewNews','viewWx','viewAtc','viewSdr','viewTv','viewWebcam'].forEach(id =>
     $(id).classList.toggle('on', id === 'view' + v[0].toUpperCase() + v.slice(1)));
   if (v === 'sdr') { try { sdrPage.onShow(); } catch (e) {} }
   if (v === 'map') { applyChips(); }
   if (v === 'atc' && !atcItems.length) requestAtc();
   if (v === 'tv' && window.tvShow) window.tvShow();
+  if (v === 'webcam' && window.wcShow) window.wcShow();
   $('hint').textContent = isGlobe
     ? 'drag to spin · pinch to zoom · tap a dot to listen'
     : isMap ? 'drag the map · pinch to zoom · tap a dot to listen' : '';
@@ -4920,6 +4945,27 @@ function ft8StartAuto(){
 function ft8StopAuto(){
   if (ft8Timer){ clearInterval(ft8Timer); ft8Timer = null; }
 }
+/* Open the FT8 view on the OWNER's own receiver - used by the TV menu so it is
+   one tap and no mouse. PSK Reporter keys spots by the RECEIVER's callsign, and
+   Eric's OpenWebRX box reports as KA3KDL while its bundled entry is named
+   "Eric's SDR", so the callsign is appended to the name to make the FT8 view
+   look for the right reporter. */
+window.ft8OpenMine = function (){
+  var it = ft8FindRecv('KA3KDL');
+  if (!it){
+    for (var i = 0; i < sdrItems.length; i++){
+      var u = String(sdrItems[i].url || ''), n = String(sdrItems[i].name || '');
+      if (u.indexOf('75.182.152.23') >= 0 || /hartsville/i.test(n)){ it = sdrItems[i]; break; }
+    }
+  }
+  if (!it && sdrItems.length) it = sdrItems[0];
+  if (!it) { toast('No SDR receivers loaded yet'); return false; }
+  var mine = { name: (it.name || 'SDR') + ' KA3KDL', loc: it.loc, lat: it.lat, lon: it.lon,
+               url: it.url, type: 'sdr' };
+  openFt8(mine);
+  return true;
+};
+
 function ft8Fetch(force){
   if (ft8Busy) return;
   if (!force && Date.now() - ft8Last < 60000) return;  /* ~1 request/min per IP */
@@ -5167,7 +5213,12 @@ function syncLanding(){
   /* the build stamp: on Android ask the host for the real versionCode, so the
      page can never claim a build the APK does not actually contain */
   try {
-    if (window.Bridge && Bridge.appVersion) set('ldBuild', 'v' + Bridge.appVersion());
+    if (window.Bridge && Bridge.appVersion){
+      /* the bridge already answers with a leading "v" (Android returns
+         "v" + versionName) - prepending another one printed "vv2.1139" */
+      var av = String(Bridge.appVersion() || '');
+      if (av) set('ldBuild', av.charAt(0).toLowerCase() === 'v' ? av : 'v' + av);
+    }
   } catch (e) {}
 }
 
@@ -5182,7 +5233,6 @@ function startLandingSync(){
 }
 
 $('ldMap').onclick    = () => setView('map');
-$('ldGlobe').onclick  = () => setView('globe');
 $('ldNews').onclick   = () => setView('news');
 $('ldWx').onclick     = () => setView('wx');
 $('ldAtc').onclick    = () => setView('atc');
@@ -5371,8 +5421,15 @@ addEventListener('resize', () => {
 /* ------------------------------------------------------------------ loop */
 let t0 = 0, lastSatUpdate = 0;
 let glW = 0, glH = 0, dbgT = 0;
+/* The 3D scene is ~7,600 station dots + borders + labels + orbiting satellites.
+   It used to keep rendering at 60 fps BEHIND every other view (the canvas is
+   only display:none, which does not stop the loop) - enough work on its own to
+   blow the frame budget on a TV box: 404 skipped frames, stalls of ~1.2 s while
+   sitting on the TV page. setView() now parks the loop when nothing needs it. */
+let sceneActive = false;
 function frame(ts){
   requestAnimationFrame(frame);
+  if (!sceneActive) return;
   /* A WebView can settle its layout after this script ran, and no resize event
      fires for that - so keep the canvas and the camera in step with the real
      viewport. Without this the globe stays framed for the wrong aspect, which
@@ -5530,7 +5587,7 @@ $('bkFile').onchange = importBackup;
    receivers, units, layer toggles and the SDR page settings (sdr_freq /
    sdr_mode / sdr_step / sdr_pick) live under keys this never touches, and a
    reload does not clear localStorage either. */
-const CACHE_KEYS = ['wr_offline_urls'];      /* derived, re-checked on next load */
+const CACHE_KEYS = ['wr_offline_urls','wr_tv_cache_v1'];      /* derived, re-checked on next load */
 function clearCache(){
   if (!confirm('Clear cached data?\n\n' +
                '\u2022 downloaded station / receiver lists are re-fetched\n' +
@@ -5596,7 +5653,10 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   #tvFavSave{border:1px solid rgba(255,199,0,.5);background:rgba(255,199,0,.12);color:#ffc700;padding:9px 12px;border-radius:9px;font-weight:700;font-size:12px}
   /* only the channel grid scrolls; header/setup/search/categories always visible */
   #tvView .tvv-head,#tvView #tvSetup,#tvView #tvSearchRow,#tvView #tvCats{flex:0 0 auto}
-  #tvList{flex:1 1 auto;min-height:0;overflow-y:auto}
+  /* the pagers live INSIDE the scroll area: as flex children they each took a
+     fixed 90px strip and left the channels 56px of screen */
+  #tvScroll{flex:1 1 auto;min-height:0;overflow-y:auto}
+  #tvList{overflow:visible}
   .tv-menu{position:fixed;inset:0;background:#05070d;z-index:55;overflow-y:auto;padding:0 0 20px}
   /* overlays must actually hide: the app only hides `.panel.hide` */
   .tv-menu.hide, #tvPlayerWrap.hide, #tvView.hide{display:none!important}
@@ -5716,6 +5776,17 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
     }
     #tvList .tv-ch .tv-nm{font-size:13px}
   }
+  /* pager: spans the grid (grid-column 1/-1 - a plain child would be one tile
+     wide) so Prev / page numbers / Next sit on their own full-width row */
+  .tv-pager{display:flex;align-items:center;justify-content:center;
+    flex-wrap:wrap;gap:7px;padding:9px 10px}
+  .tv-pager button{min-width:44px;padding:8px 12px;border-radius:9px;font-size:14px;
+    font-weight:700;border:1px solid var(--line);background:var(--panel);color:var(--txt)}
+  .tv-pager button.on{color:var(--cyan);border-color:rgba(53,224,255,.55);
+    background:rgba(53,224,255,.12)}
+  .tv-pager button[disabled]{opacity:.32}
+  .tv-pager .dots{color:var(--dim);font-size:15px}
+  .tv-pager .tv-pg-info{color:var(--dim);font-size:13px;margin-left:6px}
   #tvPlayerWrap{position:fixed;inset:0;background:#000;z-index:40;display:flex;flex-direction:column}
   #tvPlayerWrap.hide{display:none}
   #tvPlayerWrap video{flex:1;width:100%;background:#000;object-fit:contain}
@@ -5728,6 +5799,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
     <button class="mini" id="tvHome" title="Back">←</button>
     <span class="tvv-title">📺 TV / IPTV</span>
     <button id="tvCountriesBtn" title="Browse channels by country" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(53,224,255,.5);background:rgba(53,224,255,.12);color:var(--cyan);padding:8px 12px;border-radius:9px;font-weight:700;font-size:12.5px">🌍&nbsp;Countries</button>
+<button id="tvReload" title="Refresh the channel list" style="border:1px solid var(--line);background:var(--panel);color:var(--txt);padding:8px 12px;border-radius:9px;font-weight:700;font-size:12.5px">&#8635;</button>
 <button id="tvMenu" title="Open your favourites" style="display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(255,199,0,.5);background:rgba(255,199,0,.12);color:#ffc700;padding:8px 12px;border-radius:9px;font-weight:700;font-size:12.5px">★&nbsp;Favourites</button>
   </div>
   <div id="tvSetup">
@@ -5741,7 +5813,11 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
     <input id="tvSearch" placeholder="🔍 Search channels…" style="width:100%;background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--txt);padding:10px 12px;font-size:12.5px">
   </div>
   <div id="tvCats"></div>
+  <div id="tvScroll">
+  <div id="tvPagerTop" class="tv-pager"></div>
   <div id="tvList"></div>
+  <div id="tvPagerBot" class="tv-pager"></div>
+</div>
 </div>
 
 <div id="tvMenuList" class="tv-menu hide">
@@ -5764,6 +5840,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   <div id="tvPlayerHead">
     <button class="mini" id="tvBack">←</button>
     <span id="tvNowPlaying">Playing…</span>
+    <button class="mini" id="tvNative" title="Play in the TV player (hardware video)" style="display:none">&#9974;</button>
   </div>
   <video id="tvVideo" controls playsinline webkit-playsinline></video>
 </div>
@@ -5781,7 +5858,15 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   "use strict";
   var KEY = 'wr_tv_src';
   var $ = function(id){ return document.getElementById(id); };
+  /* diagnostics: console.* is invisible on Amazon's WebView, so report through
+     the native bridge (adb logcat -d | grep WorldRadio) */
+  function dbg(m){
+    try { if (window.Bridge && Bridge.log) Bridge.log(String(m)); } catch (e) {}
+    try { if (console && console.log) console.log(m); } catch (e) {}
+  }
   var src, base, user, pass, channels = [], cats = [], curCat = 'All', tvHls = null;
+  var TV_MAX = 300;    /* tiles per PAGE - 10k DOM tiles at once freezes a TV box */
+  var tvPage = 1;
 
   function esc(s){ return (s||'').replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 
@@ -5880,6 +5965,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
     var set = {};
     channels.forEach(function(c){ set[c.cat] = 1; });
     cats = Object.keys(set).sort();
+    tvPage = 1;                 /* a fresh playlist starts on page 1 */
     renderCats(); renderList();
   }
 
@@ -5891,23 +5977,112 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
     el.onclick = function(e){
       var b = e.target.closest('button'); if (!b) return;
       Array.prototype.forEach.call(el.children, function(x){ x.classList.remove('on'); });
-      b.classList.add('on'); curCat = b.dataset.c; renderList();
+      b.classList.add('on'); curCat = b.dataset.c; tvPage = 1; renderList();
     };
   }
+  /* Channels matching the category + search, as INDEXES into channels (so the
+     tiles' data-i keeps working after slicing for a page). */
+  function tvFiltered(){
+    var q = (tvQ||'').toLowerCase(), out = [];
+    for (var i = 0; i < channels.length; i++){
+      var c = channels[i];
+      if (curCat !== 'All' && c.cat !== curCat) continue;
+      if (q && (c.name||'').toLowerCase().indexOf(q) < 0 && (c.cat||'').toLowerCase().indexOf(q) < 0) continue;
+      out.push(i);
+    }
+    return out;
+  }
+
+  /* A pager instead of a hard stop at TV_MAX: with 11,472 channels the list used
+     to end at 300 with a "narrow it down" note, which hid 97% of a playlist. */
+  function pagerHTML(pages, total){
+    if (pages <= 1) return '';
+    var h = '<div class="tv-pager">'
+          + '<button data-pg="' + (tvPage-1) + '"' + (tvPage <= 1 ? ' disabled' : '') + '>&#8249; Prev</button>';
+    var want = [1, pages, tvPage-2, tvPage-1, tvPage, tvPage+1, tvPage+2], seen = {}, list = [];
+    for (var i = 0; i < want.length; i++){
+      var pg = want[i];
+      if (pg >= 1 && pg <= pages && !seen[pg]){ seen[pg] = 1; list.push(pg); }
+    }
+    list.sort(function(a,b){ return a-b; });
+    var prev = 0;
+    for (var j = 0; j < list.length; j++){
+      if (prev && list[j] - prev > 1) h += '<span class="dots">&#8230;</span>';
+      h += '<button data-pg="' + list[j] + '"' + (list[j] === tvPage ? ' class="on"' : '') + '>' + list[j] + '</button>';
+      prev = list[j];
+    }
+    h += '<button data-pg="' + (tvPage+1) + '"' + (tvPage >= pages ? ' disabled' : '') + '>Next &#8250;</button>'
+       + '<span class="tv-pg-info">' + total.toLocaleString() + ' channels</span></div>';
+    return h;
+  }
+
   function renderList(){
     var el = $('tvList'), h = '', n = 0;
-    var q = (tvQ||'').toLowerCase();
-    channels.forEach(function(c){
-      if (curCat !== 'All' && c.cat !== curCat) return;
-      if (q && (c.name||'').toLowerCase().indexOf(q) < 0 && (c.cat||'').toLowerCase().indexOf(q) < 0) return;
+  function pagerShow(pages, total){
+    var html = pagerHTML(pages, total);
+    var top = $('tvPagerTop'), bot = $('tvPagerBot');
+    if (top) top.innerHTML = html;
+    if (bot) bot.innerHTML = html;
+  }
+  function pagerClick(e){
+    var b = e.target.closest('button[data-pg]');
+    if (!b || b.disabled) return;
+    var want = parseInt(b.dataset.pg, 10);
+    var rows = tvFiltered();
+    var pages = Math.max(1, Math.ceil(rows.length / TV_MAX));
+    if (!(want >= 1 && want <= pages) || want === tvPage) return;
+    tvPage = want;
+    renderList();
+    try { var sc = $('tvScroll') || $('tvList'); sc.scrollTop = 0; } catch (e2) {}
+  }
+
+    var rows = tvFiltered();
+    var pages = Math.max(1, Math.ceil(rows.length / TV_MAX));
+    if (tvPage > pages) tvPage = pages;
+    if (tvPage < 1) tvPage = 1;
+    /* the pager is a SIBLING of the grid, not a grid child: as a child its row
+       was stretched to the tile height (158px) and pushed the channels out of
+       the visible strip */
+    pagerShow(pages, rows.length);
+    var page = rows.slice((tvPage - 1) * TV_MAX, tvPage * TV_MAX);
+    page.forEach(function(ci){
+      var c = channels[ci];
       n++;
       var s = isChFav(c.url) >= 0;
-      h += '<button class="tv-ch" data-i="'+channels.indexOf(c)+'">'
+      h += '<button class="tv-ch" data-i="'+ci+'">'
          + '<img loading="lazy" src="' + (c.icon ? esc(c.icon) : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="50" height="30"><rect width="50" height="30" fill="%23111"/><text x="3" y="20" font-size="11" fill="%2399f">TV</text></svg>') + '">'
          + '<span class="tv-nm">'+esc(c.name)+'</span>'
          + '<span class="st '+(s?'':'off')+'" title="favourite">'+(s?'★':'☆')+'</span></button>';
     });
-    el.innerHTML = h || '<div style="color:var(--dim);padding:20px 12px;font-size:12px">No channels found — check the URL.</div>';
+    if (!n) h += '<div style="color:var(--dim);padding:20px 12px;font-size:12px">No channels found — check the URL.</div>';
+    el.innerHTML = h;
+    try { dbg('TV renderList: channels=' + channels.length + ' rows=' + rows.length +
+      ' pages=' + pages + ' page=' + tvPage + ' tiles=' + n + ' cat=' + curCat + ' q="' + tvQ + '"' +
+      ' html=' + h.length + ' el=' + (el ? el.id : 'NULL') + ' pager=' + /tv-pager/.test(h)); } catch (e) {}
+    window.__tvDiag = function (pg){ tvPage = pg || 1; renderList(); return {rows: tvFiltered().length, page: tvPage}; };
+    try {
+      var rect = function (sel){
+        var e = ($(sel) || (document.querySelector ? document.querySelector(sel) : null));
+        if (!e) return sel + '=null';
+        var r = e.getBoundingClientRect();
+        return sel + '=' + Math.round(r.width) + 'x' + Math.round(r.height) + '@' + Math.round(r.left) + ',' + Math.round(r.top) +
+               (e.offsetParent === null ? ' [displayed:no]' : '');
+      };
+      var pgEl = document.querySelector('.tv-pager');
+      var pgR = pgEl ? pgEl.getBoundingClientRect() : null;
+      var pgC = pgEl ? getComputedStyle(pgEl) : null;
+      var lEl = $('tvScroll') || $('tvList'), lC = lEl ? getComputedStyle(lEl) : null;
+      dbg('PAGER ' + (pgR ? Math.round(pgR.width) + 'x' + Math.round(pgR.height) + '@' + Math.round(pgR.left) + ',' + Math.round(pgR.top) : 'none') +
+          ' display=' + (pgC ? pgC.display : '-') + ' gridCol=' + (pgC ? pgC.gridColumn : '-') +
+          ' listScrollTop=' + (lEl ? lEl.scrollTop : '-') + ' listChildren=' + (lEl ? lEl.children.length : '-') +
+          ' listOverflow=' + (lC ? lC.overflowY : '-') + ' rows=' + (lC ? lC.gridTemplateRows : '-'));
+      dbg('VIEW ' + viewMode +
+          ' tvViewHidden=' + ($('tvView') ? $('tvView').classList.contains('hide') : 'no-el') +
+          ' ' + rect('tvList') + ' ' + rect('.tv-ch') + ' ' + rect('#tvView') +
+          ' vp=' + document.documentElement.clientWidth + 'x' + document.documentElement.clientHeight +
+          ' dpr=' + window.devicePixelRatio +
+          ' scrollH=' + (document.scrollingElement ? document.scrollingElement.scrollHeight : '?'));
+    } catch (e) { dbg('VIEW log failed: ' + e); }
     // Some playlist logo URLs are dead or blocked; show a clean TV placeholder
     // instead of the browser's broken-image icon.
     Array.prototype.forEach.call(el.querySelectorAll('.tv-ch img'), function(img){
@@ -5923,6 +6098,8 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
         );
       }, {once:true});
     });
+    $('tvPagerTop').onclick = pagerClick;
+    $('tvPagerBot').onclick = pagerClick;
     el.onclick = function(e){
       var b = e.target.closest('button[data-i]'); if (!b) return;
       var c = channels[+b.dataset.i]; if(!c) return;
@@ -5936,18 +6113,47 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   }
 
   /* ---------- play ---------- */
+  var nativeTimer = null;
   function teardown(){
+    if (nativeTimer){ clearInterval(nativeTimer); nativeTimer = null; }
     if (tvHls){ try{ tvHls.destroy(); }catch(e){} tvHls = null; }
     var v = $('tvVideo');
     try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){}
   }
+  /* Wait for a real PICTURE (not just sound) before trusting the WebView. */
+  function watchForPicture(url, name, label){
+    var started = Date.now();
+    nativeTimer = setInterval(function(){
+      var vv = label === 'tv' ? $('tvVideo') : $('wcVideo');
+      if (!vv) return;
+      if (vv.videoWidth > 0){ clearInterval(nativeTimer); nativeTimer = null; return; }
+      if (Date.now() - started > 6000){
+        clearInterval(nativeTimer); nativeTimer = null;
+        try { vv.pause(); } catch (e) {}
+        if (label === 'tv') $('tvPlayerWrap').classList.add('hide');
+        try { Bridge.playStream(url, name || ''); } catch (e) {}
+      }
+    }, 700);
+  }
   function playURL(url, name){
     if (!url) return;
+    tvCurUrl = url; tvCurName = name || '';
     teardown();
     $('tvNowPlaying').textContent = name || '';
     $('tvPlayerWrap').classList.remove('hide');
     var v = $('tvVideo');
+    var isAndroid = !!(window.Bridge && Bridge.playStream);
     var canNative = v.canPlayType && v.canPlayType('application/vnd.apple.mpegurl') !== '';
+    if (isAndroid){
+      /* Hard limit inside an Android WebView: the hls.js / MediaSource path
+         decodes the AUDIO but renders NO VIDEO on these TV boxes - the exact
+         "sound but no picture" report. So give the WebView's own media stack the
+         stream first, and if no picture appears in a few seconds hand it to the
+         real native player, which uses the hardware decoder. */
+      v.src = url; v.play().catch(function(){});
+      watchForPicture(url, name, 'tv');
+      return;
+    }
     if (canNative){
       v.src = url; v.play().catch(function(){});
     } else if (window.Hls && Hls.isSupported()){
@@ -5956,7 +6162,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
       tvHls.on(Hls.Events.ERROR, function(ev,data){ if(data && data.fatal){ msg('Stream error — provider may block CORS/streams.'); } });
       v.play().catch(function(){});
     } else {
-      msg('This stream needs native HLS or hls.js.');
+      v.src = url; v.play().catch(function(){});
     }
   }
   function play(i){
@@ -5964,10 +6170,75 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
     playURL(c.url, c.name);
   }
 
+  /* ---------- channel-list cache -----------------------------------------
+     A provider hands out the same channel list every single time, so fetching
+     it on every visit made the tab slow, and useless with no signal. The PARSED
+     list is kept in localStorage keyed by the source URL (tuples, not objects,
+     to keep it small), so returning to the tab - or restarting the app - shows
+     the channels immediately. ↻ on the header forces a real refresh. */
+  var CACHE = 'wr_tv_cache_v1', CACHE_TTL = 24 * 3600 * 1000, CACHE_MAX = 3500000;
+
+  function cacheRead(url){
+    try {
+      var all = JSON.parse(localStorage.getItem(CACHE) || '{}') || {};
+      var e = all[url];
+      return (e && e.ch && e.ch.length) ? e : null;
+    } catch (err){ return null; }
+  }
+  function cacheWrite(url, name){
+    var rows = channels.map(function(c){ return [c.name || '', c.icon || '', c.cat || 'Playlist', c.url || '']; });
+    /* over quota? drop the logos (the bulk of the size) and retry */
+    function put(slim){
+      var all = {};
+      try { all = JSON.parse(localStorage.getItem(CACHE) || '{}') || {}; } catch (err){ all = {}; }
+      all[url] = { t: Date.now(), n: name || '', ch: slim };
+      var keys = Object.keys(all), size = JSON.stringify(all).length;
+      if (size > CACHE_MAX){
+        keys.sort(function(a, b){ return (all[a].t || 0) - (all[b].t || 0); });
+        while (size > CACHE_MAX && keys.length > 1){
+          delete all[keys.shift()];
+          size = JSON.stringify(all).length;
+        }
+      }
+      localStorage.setItem(CACHE, JSON.stringify(all));
+    }
+    try { put(rows); return true; }
+    catch (err){
+      try { put(rows.map(function(r){ return [r[0], '', r[2], r[3]]; })); return true; }
+      catch (e2){ return false; }
+    }
+  }
+  function cacheTime(ts){
+    if (!ts) return 'saved';
+    var m = Math.round((Date.now() - ts) / 60000);
+    if (m < 2) return 'just now';
+    if (m < 60) return m + ' min ago';
+    var h = Math.round(m / 60);
+    if (h < 24) return h + ' h ago';
+    return Math.round(h / 24) + ' d ago';
+  }
+  function applyCached(e){
+    channels = e.ch.map(function(a, i){
+      return { name: a[0], icon: a[1] || '', cat: a[2] || 'Playlist', url: a[3], id: i };
+    });
+    buildCats();
+  }
+
   /* ---------- load ---------- */
-  function load(srcVal){
-    var r = resolveSource(srcVal || ($('tvSrc').value));
+  function load(srcVal, force){
+    var raw = srcVal || ($('tvSrc').value);
+    var r = resolveSource(raw);
     if (!r){ msg('Enter an Xtream or .m3u URL first.'); return; }
+    var ck = r.list;
+    if (!force){
+      var hit = cacheRead(ck);
+      if (hit && (Date.now() - (hit.t || 0)) < CACHE_TTL){
+        applyCached(hit);
+        try { localStorage.setItem(KEY, raw); } catch (e) {}
+        msg(hit.ch.length + ' channels \u00b7 cached ' + cacheTime(hit.t) + ' \u00b7 \u21bb to refresh');
+        return;
+      }
+    }
     msg('Fetching channels…');
     fetchText(r.list).then(function(text){
       if (!text){ msg('Empty response from the provider.'); return; }
@@ -5979,8 +6250,10 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
       } else {
         parseM3U(text);
       }
-      try { localStorage.setItem(KEY, srcVal || $('tvSrc').value); }catch(e){}
-      msg(channels.length ? (channels.length + ' channels loaded') : '0 channels — check the URL.');
+      try { localStorage.setItem(KEY, raw); }catch(e){}
+      var cachedOk = channels.length ? cacheWrite(ck, tvAutoName(raw)) : false;
+      msg(channels.length ? (channels.length + ' channels loaded' + (cachedOk ? ' \u00b7 saved for next time' : ''))
+                          : '0 channels — check the URL.');
     }).catch(function(e){ msg('Could not reach provider (' + (e&&e.message||e) + '). Enable CORS or use the python-server version.'); });
   }
 
@@ -6109,13 +6382,829 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   tvLoadFavs(); tvLoadChFavs();
 
   var tvQ = '';
-  $('tvSearch').oninput = function(){ tvQ = this.value || ''; renderList(); };
+  $('tvSearch').oninput = function(){ tvQ = this.value || ''; tvPage = 1; renderList(); };
 
   /* ---------- wire controls ---------- */
-  $('tvLoad').onclick = function(){ load(); };
+  $('tvLoad').onclick = function(){ load(null, true); };
+  /* The WebView cannot always put VIDEO on screen for these streams (it decodes,
+     then shows black) - so offer the platform player, which uses the hardware
+     decoder and the remote. Hidden unless the native bridge is present. */
+  var tvCurUrl = '', tvCurName = '';
+  if (window.Bridge && Bridge.playStream){
+    $('tvNative').style.display = 'inline-flex';
+    $('tvNative').onclick = function(){ try { Bridge.playStream(tvCurUrl, tvCurName); } catch (e) {} };
+  }
+  $('tvReload').onclick = function(){ if ($('tvSrc').value) load($('tvSrc').value, true); };
   $('tvHome').onclick = function(){ setView('home'); };
   $('tvBack').onclick = function(){ $('tvPlayerWrap').classList.add('hide'); teardown(); };
   $('tvVideo').onclick = function(){};
+})();
+</script>
+<style>
+
+  /* ================= WEBCAMS view ================= */
+  #wcView{flex-direction:column;background:#05070d;overflow-y:auto;padding:0 0 14px}
+  #wcView .wc-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#0a0e14;z-index:7;flex-wrap:wrap}
+  #wcView .wc-title{font-weight:700;font-size:14px;color:var(--txt)}
+  #wcView .mini{width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--txt);font-size:14px;display:grid;place-items:center}
+  #wcView .mini:active{transform:scale(.93)}
+  #wcLive.on{color:#ff6b6b;border-color:rgba(255,107,107,.55);background:rgba(255,107,107,.12)}
+  #wcMap{height:34vh;min-height:190px;width:100%;background:#070b12;flex:0 0 auto}
+  #wcChips{display:flex;gap:6px;overflow-x:auto;padding:9px 12px 3px;scrollbar-width:none;flex:0 0 auto}
+  #wcChips::-webkit-scrollbar{display:none}
+  #wcChips button{flex:0 0 auto;border:1px solid var(--line);background:var(--panel);color:var(--dim);border-radius:11px;padding:7px 11px;font-size:11.5px;font-weight:650;cursor:pointer}
+  #wcChips button.on{background:rgba(53,224,255,.14);color:var(--cyan);border-color:rgba(53,224,255,.45)}
+  #wcChips button i{font-style:normal;font-size:10px;opacity:.65;margin-left:3px}
+  #wcStat2{font-size:11px;color:var(--dim);padding:5px 13px 0}
+  #wcList{display:grid;grid-template-columns:repeat(auto-fill,minmax(186px,1fr));gap:12px;padding:10px 12px;align-content:start}
+  .wc-card{display:flex;flex-direction:column;gap:7px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px;cursor:pointer;overflow:hidden;position:relative;text-align:left;font:inherit;color:inherit}
+  .wc-card img{display:block;width:100%;height:110px;object-fit:cover;border-radius:8px;background:#0a0f18}
+  .wc-card .wn{font-size:12.5px;color:var(--txt);font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wc-card .wp{font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wc-card .wb{position:absolute;top:14px;left:14px;font-size:9px;font-weight:800;letter-spacing:.06em;padding:2px 6px;border-radius:6px;background:rgba(220,40,40,.9);color:#fff}
+  .wc-card .wb.still{background:rgba(0,0,0,.66);color:#ffd54a}
+  .wc-card:hover{border-color:rgba(53,224,255,.42)}
+  .wc-card:active{transform:scale(.985)}
+  .wc-empty{padding:24px 16px;color:var(--dim);font-size:12.5px;text-align:center}
+  @media(max-width:520px){#wcList{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.wc-card img{height:92px}}
+  #wcPlayerWrap{position:fixed;inset:0;background:#000;z-index:46;display:flex;flex-direction:column}
+  #wcPlayerWrap.hide{display:none!important}
+  #wcPlayerHead{display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(8,12,20,.96);border-bottom:1px solid var(--line)}
+  #wcPlayerHead .t{flex:1;font-size:12.5px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #wcPlayerHead .mini{width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--txt);font-size:14px;display:grid;place-items:center}
+  #wcWorldRow{display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(8,12,20,.96);
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  #wcWorldRow.hide{display:none!important}
+  #wcWorldRow input{flex:1 1 210px;min-width:0;padding:9px 11px;border-radius:9px;font-size:12.5px;
+    border:1px solid var(--line);background:#070b12;color:var(--txt)}
+  #wcWorldRow button{padding:9px 12px;border-radius:9px;font-size:12px;font-weight:700;
+    border:1px solid var(--line);background:var(--panel);color:var(--txt)}
+  #wcWorldRow span{color:var(--amber,#ffb020);font-size:11.5px}
+  #wcStage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:#000;overflow:hidden}
+  #wcStage video{width:100%;height:100%;object-fit:contain;background:#000}
+  #wcStage img{max-width:100%;max-height:100%;object-fit:contain}
+  #wcPlayerStat{font-size:11px;color:var(--dim);padding:6px 12px;background:rgba(8,12,20,.96)}
+
+</style>
+
+<div id="wcView" class="panel hide">
+  <div class="wc-head">
+    <button class="mini" id="wcHome" title="Back">&#8592;</button>
+    <span class="wc-title">&#128247; Webcams</span>
+    <span id="wcCount" class="ph-sub"></span>
+    <button id="wcLive" class="mini wide" title="live video only">LIVE</button>
+    <button id="wcMore" class="mini wide" title="load more cameras">+ Regions</button>
+    <button id="wcWorldBtn" class="mini wide" title="worldwide cameras (needs a free Windy API key)">&#127757; Worldwide</button>
+    <button id="wcReload" class="mini" title="reload">&#8635;</button>
+  </div>
+  <div id="wcWorldRow" class="hide">
+    <input id="wcWorldKey" type="text" placeholder="paste your free Windy API key" autocomplete="off">
+    <button id="wcWorldSave">Save &amp; load</button>
+    <button id="wcWorldHelp">Get a free key</button>
+    <span id="wcWorldState" style="display:none"></span>
+  </div>
+  <div id="wcMap"></div>
+  <div id="wcChips"></div>
+  <div id="wcStat2">&nbsp;</div>
+  <div id="wcList"></div>
+</div>
+
+<div id="wcPlayerWrap" class="hide">
+  <div id="wcPlayerHead">
+    <button class="mini" id="wcClose" title="Back">&#8592;</button>
+    <span class="t" id="wcName">&mdash;</span>
+    <button class="mini" id="wcShot" title="refresh frame">&#8635;</button>
+    <button class="mini" id="wcNative" title="Play in the TV player (hardware video)" style="display:none">&#9974;</button>
+  </div>
+  <div id="wcStage"><video id="wcVideo" controls playsinline webkit-playsinline></video><img id="wcImg" alt=""></div>
+  <div id="wcPlayerStat">&mdash;</div>
+</div>
+
+
+<script>
+/* ================= WEBCAMS ====================================================
+   Two keyless, CORS-open public sources (both verified reachable):
+     • Caltrans CCTV  - California highway cameras, ~3,600 of them across 12
+       districts, and most stream REAL LIVE VIDEO (HLS .m3u8) plus a JPEG still.
+     • TfL JamCams    - ~890 London roadside cameras (JPEG stills, ~1/min).
+   Data is fetched live on demand (no bundled file), so it is always current and
+   nothing has to be shipped inside the APK. Fetch order is the same one the TV
+   page uses: Android native bridge -> direct fetch -> same-origin /api/proxy.
+   ========================================================================== */
+(function(){
+  "use strict";
+  var $ = function(id){ return document.getElementById(id); };
+
+  var SOURCES = {
+    tfl: {n:'\uD83C\uDDEC\uD83C\uDDE7 London', long:'London \u00b7 TfL JamCams',
+          url:'https://api.tfl.gov.uk/Place/Type/JamCam', kind:'tfl'},
+    d3:  {n:'CA D3', long:'California D3 \u00b7 Sacramento', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d3/cctv/cctvStatusD03.json'},
+    d4:  {n:'CA D4', long:'California D4 \u00b7 Bay Area', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d4/cctv/cctvStatusD04.json'},
+    d7:  {n:'CA D7', long:'California D7 \u00b7 Los Angeles', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d7/cctv/cctvStatusD07.json'},
+    d11: {n:'CA D11', long:'California D11 \u00b7 San Diego', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d11/cctv/cctvStatusD11.json'},
+    d8:  {n:'CA D8', long:'California D8 \u00b7 San Bernardino', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d8/cctv/cctvStatusD08.json'},
+    d12: {n:'CA D12', long:'California D12 \u00b7 Orange County', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d12/cctv/cctvStatusD12.json'},
+    d5:  {n:'CA D5', long:'California D5 \u00b7 Central Coast', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d5/cctv/cctvStatusD05.json'},
+    d1:  {n:'CA D1', long:'California D1 \u00b7 North Coast', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d1/cctv/cctvStatusD01.json'},
+    d6:  {n:'CA D6', long:'California D6 \u00b7 Fresno', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d6/cctv/cctvStatusD06.json'},
+    d10: {n:'CA D10', long:'California D10 \u00b7 Stockton', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d10/cctv/cctvStatusD10.json'},
+    d2:  {n:'CA D2', long:'California D2 \u00b7 Redding', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d2/cctv/cctvStatusD02.json'},
+    d9:  {n:'CA D9', long:'California D9 \u00b7 Bishop', kind:'cal',
+          url:'https://cwwp2.dot.ca.gov/data/d9/cctv/cctvStatusD09.json'},
+    fi:  {n:'\uD83C\uDDEB\uD83C\uDDEE Finland', long:'Finland \u00b7 Digitraffic (814 road cams)', kind:'fi',
+          url:'https://tie.digitraffic.fi/api/weathercam/v1/stations'},
+    sg:  {n:'\uD83C\uDDF8\uD83C\uDDEC Singapore', long:'Singapore \u00b7 LTA', kind:'sg',
+          url:'https://api.data.gov.sg/v1/transport/traffic-images'},
+    il:  {n:'US IL', long:'Illinois \u00b7 IDOT', kind:'arc',
+          url:'https://services2.arcgis.com/aIrBD8yn1TDTEXoz/arcgis/rest/services/TrafficCamerasTM_Public/FeatureServer/0'},
+    ky:  {n:'US KY', long:'Kentucky \u00b7 KYTC', kind:'arc',
+          url:'https://services2.arcgis.com/CcI36Pduqd0OR4W9/arcgis/rest/services/trafficCamerasCur_Prd/FeatureServer/0'},
+    or_: {n:'US OR', long:'Oregon \u00b7 TripCheck', kind:'arc',
+          url:'https://services.arcgis.com/uUvqNMGPm7axC2dD/arcgis/rest/services/TripCheck_Cameras/FeatureServer/0'},
+    nz:  {n:'\uD83C\uDDF3\uD83C\uDDFF NZ', long:'New Zealand \u00b7 NZTA', kind:'arc',
+          url:'https://services.arcgis.com/XTtANUDT8Va4DLwI/arcgis/rest/services/LiveCamerasNZTA_Public_View/FeatureServer/0'},
+    yy:  {n:'\uD83C\uDDE8\uD83C\uDDE6 Calgary', long:'Calgary \u00b7 City of Calgary', kind:'arc',
+          url:'https://services1.arcgis.com/AVP60cs0Q9PEA8rH/arcgis/rest/services/TrafficCameras_Public/FeatureServer/0'},
+    nf:  {n:'\uD83C\uDDE8\uD83C\uDDE6 NL-CAN', long:'Newfoundland \u00b7 gov.nl.ca', kind:'arc',
+          url:'https://services8.arcgis.com/aCyQID5qQcyrJMm2/arcgis/rest/services/TI_HighwayCamera/FeatureServer/0'},
+    /* ---- verified image-backed layers added 2026-11-15 ---- */
+    alertwild: {n:'US AlertCA', long:'ALERTCalifornia \u00b7 1,289 wildfire/emergency cams', kind:'arc', max:1500,
+          url:'https://services8.arcgis.com/X84q166Srnyl4JMV/arcgis/rest/services/ALERTCalifornia_Camera_Feed/FeatureServer/0'},
+    caloes: {n:'US CalOES', long:'California OES \u00b7 4,345 emergency cams', kind:'arc', max:1500,
+          url:'https://services.arcgis.com/BLN4oKB0N1YSgvY8/arcgis/rest/services/CalOES_California_Webcams/FeatureServer/0'},
+    /* worldwide: Windy webcams (40k+ cams, 100+ countries). Needs a free API key -
+       paste it on the Webcams page and this layer appears. */
+    windy: {n:'\uD83C\uDF0D Worldwide', long:'Worldwide \u00b7 Windy webcams (free API key)', kind:'windy', url:''},
+  };
+  var DEFAULT = ['tfl','d3','d4'];
+  var MORE    = ['d7','d11','d8','d12','d5','d1','d6','d10','d2','d9'];
+
+  /* ---- bundled snapshot (works with no network and no CORS) ---- */
+  var bundled = false;
+  function ingest(rows){
+    for (var i = 0; i < rows.length; i++){
+      var c = rows[i] || {};
+      if (!c.n || !isFinite(+c.la) || !isFinite(+c.lo) || !c.i) continue;
+      var k = (c.s || '?') + '|' + c.n + '|' + (+c.la).toFixed(4) + ',' + (+c.lo).toFixed(4);
+      if (seen[k]) continue;
+      seen[k] = 1;
+      cams.push({ src:c.s || 'mix', name:c.n, place:c.p || '', lat:+c.la, lon:+c.lo,
+                  img:c.i, hls:c.h || '', live:!!c.h });
+    }
+  }
+  function loadBundled(again){
+    if (bundled && !again) return;
+    bundled = true;
+    var done = function(txt){
+      try {
+        var j = JSON.parse(txt);
+        var rows = (j && j.cams) ? j.cams : (Array.isArray(j) ? j : []);
+        ingest(rows);
+        /* mark ONLY the sources the snapshot carries - blanket-marking every
+           source made the live worldwide layers look "already loaded" and they
+           were never fetched. */
+        for (var i2 = 0; i2 < rows.length; i2++){ if (rows[i2] && rows[i2].s) loaded[rows[i2].s] = true; }
+        render();
+      } catch (e) { bundled = false; }
+    };
+    if (window.Bridge && typeof window.Bridge.loadWebcams === 'function'){
+      window.onWebcams = done;
+      try { window.Bridge.loadWebcams(); return; } catch (e) {}
+    }
+    fetch('webcams.json').then(function(r){ return r.ok ? r.text() : Promise.reject(new Error('HTTP')); })
+      .then(done).catch(function(){ bundled = false; });
+  }
+
+
+
+  var cams = [], seen = {}, loaded = {}, busy = {};
+  var filter = 'all', liveOnly = false, lastFit = 0;
+  var wmap = null, wlayer = null, wmarks = [], wfitted = false;
+  var hls = null, shot = null, cur = null, moreOpen = false, wcNativeTimer = null;
+
+  function fetchText(url){
+    return new Promise(function(resolve, reject){
+      if (window.Bridge && typeof window.Bridge.fetchUrl === 'function'){
+        window.onTvFetch = function(b){ if (b != null && b !== '') resolve(b); else reject(new Error('empty')); };
+        try { window.Bridge.fetchUrl(url); } catch (e){ reject(e); }
+        return;
+      }
+      fetch(url).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(resolve).catch(function(){
+          fetch('/api/proxy?u=' + encodeURIComponent(url)).then(function(r){
+            return r.ok ? r.text() : Promise.reject(new Error('proxy ' + r.status));
+          }).then(resolve).catch(function(){ reject(new Error('fetch failed')); });
+        });
+    });
+  }
+
+  function parseCal(text, key){
+    var j = JSON.parse(text), out = [], rows = (j && j.data) || [];
+    for (var i = 0; i < rows.length; i++){
+      var c = (rows[i] && rows[i].cctv) || {}, loc = c.location || {},
+          im = c.imageData || {}, st = im.static || {};
+      var la = parseFloat(loc.latitude), lo = parseFloat(loc.longitude);
+      if (!isFinite(la) || !isFinite(lo)) continue;
+      var img = String(st.currentImageURL || '');
+      if (!img) continue;
+      img = img.replace(/^http:/, 'https:');
+      var v = String(im.streamingVideoURL || '').trim();
+      out.push({
+        src:key, name:(loc.locationName || 'Camera') + (loc.nearbyPlace ? ' \u00b7 ' + loc.nearbyPlace : ''),
+        place:[loc.route, loc.county].filter(Boolean).join(' \u00b7 '),
+        lat:la, lon:lo, img:img, hls:v, live:!!v
+      });
+    }
+    return out;
+  }
+  function parseTfl(text, key){
+    var j = JSON.parse(text), out = [];
+    for (var i = 0; i < j.length; i++){
+      var it = j[i] || {}, la = parseFloat(it.lat), lo = parseFloat(it.lon);
+      if (!isFinite(la) || !isFinite(lo)) continue;
+      var img = '', ap = it.additionalProperties || [];
+      for (var k = 0; k < ap.length; k++){ if (ap[k] && ap[k].key === 'imageUrl'){ img = ap[k].value; break; } }
+      if (!img) continue;
+      out.push({ src:key, name:it.commonName || 'Camera', place:'London \u00b7 TfL',
+                 lat:la, lon:lo, img:img, hls:'', live:false });
+    }
+    return out;
+  }
+
+
+  /* ---- generic ArcGIS camera layer ----------------------------------------
+     Every state/province/city that publishes its cameras through ArcGIS Online
+     can be read with one query. Coordinates come from the feature geometry
+     (asked for in WGS84), the name from whichever naming field the layer uses,
+     and the picture from whichever field holds a jpg/png URL - including
+     layers that bury the link inside an HTML snippet. This is what makes
+     adding another region a one-line job. */
+  function pickImg(a){
+    var i, v, m;
+    for (i in a){
+      v = a[i];
+      if (typeof v === 'string' && /^https?:\/\/[^\s"']+\.(jpe?g|png)(\?|$)/i.test(v)) return v;
+    }
+    for (i in a){
+      v = a[i];
+      if (typeof v === 'string' && v.indexOf('http') >= 0){
+        m = v.match(/https?:\/\/[^\s"'<>]+\.(jpe?g|png)/i);
+        if (m) return m[0];
+      }
+    }
+    return '';
+  }
+  var NAME_FIELDS = ['Name','name','NAME','Label','Label_Text','label','RoadName','Location',
+                     'location','LocationDescription','Location_Name','Title','CommonName',
+                     'Description','desc','Site_Name','camera_name','CAMERA_NAME'];
+  function pickName(a, i, img){
+    for (var k = 0; k < NAME_FIELDS.length; k++){
+      var f = NAME_FIELDS[k];
+      if (a[f] != null && String(a[f]).trim() && !/^https?:/i.test(String(a[f]))) return String(a[f]).trim();
+    }
+    /* no name field: several DOTs encode the location in the picture's filename
+       (IL-IDOTD1_1_Cook_WB_Albin_4188597_-8791483_2_NONE.jpg), which reads far
+       better than "Camera 12". */
+    if (img){
+      var f2 = img.split('/').pop().split('?')[0].replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').trim();
+      f2 = f2.replace(/\s+/g, ' ').replace(/\b\d{6,}\b/g, '').trim();
+      if (f2.length > 3) return f2;
+    }
+    return 'Camera ' + (i + 1);
+  }
+  function parseArc(text, key){
+    var j = JSON.parse(text), out = [], fs = (j && j.features) || [];
+    for (var i = 0; i < fs.length; i++){
+      var f = fs[i] || {}, a = f.attributes || {}, g = f.geometry || {};
+      var la = +(g.y != null ? g.y : (a.latitude != null ? a.latitude : a.lat));
+      var lo = +(g.x != null ? g.x : (a.longitude != null ? a.longitude : a.lon));
+      if (!isFinite(la) || !isFinite(lo) || (la === 0 && lo === 0)) continue;
+      var img = pickImg(a);
+      if (!img) continue;
+      var place = '';
+      for (var k = 0; k < ['RoadName','Road','Route','County','City','Location','Locality'].length; k++){
+        var fld = ['RoadName','Road','Route','County','City','Location','Locality'][k];
+        if (a[fld] && String(a[fld]).trim()){ place = String(a[fld]).trim(); break; }
+      }
+      out.push({ src:key, name:pickName(a, i, img), place:place,
+                 lat:+la.toFixed(4), lon:+lo.toFixed(4),
+                 img:img.replace(/^http:/, 'https:'), hls:'', live:false });
+    }
+    return out;
+  }
+  /* ---- Finland: Digitraffic road weather cameras (one entry per preset) ---- */
+  function parseFi(text, key){
+    var j = JSON.parse(text), out = [], fs = (j && j.features) || [];
+    for (var i = 0; i < fs.length; i++){
+      var f = fs[i] || {}, p = f.properties || {}, g = f.geometry || {};
+      var c = g.coordinates || [];
+      var la = +c[1], lo = +c[0];
+      if (!isFinite(la) || !isFinite(lo)) continue;
+      var nm = (p.name || ('Camera ' + (p.id || i)));
+      var pres = p.presets || [];
+      for (var k = 0; k < pres.length && k < 2; k++){
+        var pid = pres[k] && pres[k].id;
+        if (!pid) continue;
+        out.push({ src:key, name:nm + (pres.length > 1 ? ' \u00b7 ' + (k + 1) : ''),
+                   place:'Finland \u00b7 road weather cam',
+                   lat:+la.toFixed(4), lon:+lo.toFixed(4),
+                   img:'https://weathercam.digitraffic.fi/' + pid + '.jpg', hls:'', live:false });
+      }
+    }
+    return out;
+  }
+  /* ---- Singapore: LTA traffic images ---- */
+  function parseSg(text, key){
+    var j = JSON.parse(text), out = [];
+    var items = (j && j.items) || [];
+    var cams = (items.length && items[0].cameras) || [];
+    for (var i = 0; i < cams.length; i++){
+      var c = cams[i] || {}, L2 = c.location || {};
+      var la = +L2.latitude, lo = +L2.longitude;
+      if (!isFinite(la) || !isFinite(lo) || !c.image) continue;
+      out.push({ src:key, name:'Singapore cam ' + (c.camera_id || (i + 1)), place:'Singapore \u00b7 LTA',
+                 lat:+la.toFixed(4), lon:+lo.toFixed(4), img:c.image, hls:'', live:false });
+    }
+    return out;
+  }
+
+
+  /* ---------- worldwide (Windy webcams) ------------------------------------
+     Windy covers ~40,000 cameras in 100+ countries, which no keyless source does.
+     It needs an API key in a HEADER, so: the Android bridge sends it (a page
+     fetch() cannot add headers without CORS), and the PC/Linux builds go through
+     the python host's /api/windy proxy which adds it server-side. */
+  /* the bridge logger lives in the TV block's scope, so give this one its own */
+  function wlog(m){ try { if (window.Bridge && Bridge.log) Bridge.log('windy: ' + m); } catch (e) {} }
+  var WINDY_KEY = '';
+  try { WINDY_KEY = localStorage.getItem('wr_windy_key') || ''; } catch (e) {}
+  var WINDY_PAGES = 20;              /* 50 per page -> 1,000 worldwide cams */
+  var WINDY_CACHE = 'wr_windy_cache_v1';
+
+  function windyState(msg){
+    var el = $('wcWorldState');
+    if (el){ el.textContent = msg || ''; el.style.display = msg ? 'inline' : 'none'; }
+  }
+  function windyFetch(url, key){
+    return new Promise(function (resolve, reject){
+      if (window.Bridge && typeof window.Bridge.fetchUrlH === 'function'){
+        window.onWindyFetch = function (b){ if (b) resolve(b); else reject(new Error('empty')); };
+        try { window.Bridge.fetchUrlH(url, 'x-windy-api-key', key, 'onWindyFetch'); }
+        catch (e){ reject(e); }
+        return;
+      }
+      fetch('/api/windy?key=' + encodeURIComponent(key) + '&u=' + encodeURIComponent(url))
+        .then(function (r){ if (!r.ok) throw new Error('http ' + r.status); return r.text(); })
+        .then(resolve)
+        .catch(function (){
+          fetch(url, { headers: { 'x-windy-api-key': key } })       /* only if Windy sends CORS */
+            .then(function (r){ if (!r.ok) throw new Error('http ' + r.status); return r.text(); })
+            .then(resolve).catch(function (){ reject(new Error('windy unreachable')); });
+        });
+    });
+  }
+  function windyRows(list, key){
+    var out = [];
+    for (var i = 0; i < list.length; i++){
+      var w = list[i] || {}, L = w.location || {}, im = (w.images && (w.images.current || w.images.daylight)) || {};
+      var img = im.preview || im.thumbnail || im.icon || '';
+      var la = +L.latitude, lo = +L.longitude;
+      if (!img || !isFinite(la) || !isFinite(lo)) continue;
+      out.push({ src:key, name: w.title || ('Webcam ' + (w.id || i)),
+                 place: [L.city, L.region, L.country].filter(Boolean).join(', '),
+                 lat: +la.toFixed(4), lon: +lo.toFixed(4), img: String(img), hls: '', live: false });
+    }
+    return out;
+  }
+  function loadWindy(key, cb){
+    if (!WINDY_KEY){ windyState('paste a free Windy API key above'); $('wcWorldRow').classList.remove('hide'); return; }
+    busy[key] = true;
+    try {
+      var c = JSON.parse(localStorage.getItem(WINDY_CACHE) || 'null');
+      if (c && c.t && (Date.now() - c.t) < 24 * 3600 * 1000 && c.cams && c.cams.length){
+        absorbRows(windyRows(c.cams, key), key);
+        chipStat(c.cams.length + ' worldwide cameras (cached today)');
+        busy[key] = false; if (cb) cb(); return;
+      }
+    } catch (e) {}
+    var all = [], page = 0;
+    function step(){
+      if (page >= WINDY_PAGES){
+        try { localStorage.setItem(WINDY_CACHE, JSON.stringify(all)); } catch (e) {}
+        absorbRows(windyRows(all, key), key);
+        chipStat(all.length ? (all.length + ' worldwide cameras') : 'worldwide: no cameras returned');
+        busy[key] = false; if (cb) cb();
+        return;
+      }
+      var u = 'https://api.windy.com/webcams/api/v3/webcams?limit=50&offset=' + (page * 50) + '&include=images,location&lang=en';
+      windyFetch(u, WINDY_KEY).then(function (txt){
+        var arr = [];
+        if (txt && txt.charAt(0) === '!'){          /* the bridge reports failures this way */
+          wlog(txt)
+          busy[key] = false; chipStat('');
+          windyState('worldwide: ' + txt.replace('!', '') + ' \u2014 check the key');
+          return;
+        }
+        try { arr = (JSON.parse(txt).webcams) || []; }
+        catch (e){ busy[key] = false; windyState('worldwide: unreadable reply (key rejected?)'); chipStat(''); return; }
+        for (var i = 0; i < arr.length; i++) all.push(arr[i]);
+        page++;
+        if (arr.length) chipStat('loading worldwide \u2026 ' + all.length + ' cams');
+        setTimeout(step, 220);
+      }).catch(function (){
+        if (all.length){ absorbRows(windyRows(all, key), key); chipStat(all.length + ' worldwide cameras'); }
+        else { chipStat(''); windyState('worldwide: request failed \u2014 check the key'); }
+        busy[key] = false;
+      });
+    }
+    step();
+  }
+
+  /* shared by every source: dedupe, add, then redraw once */
+  function absorbRows(rows, key){
+    for (var i = 0; i < rows.length; i++){
+      var c = rows[i], k = c.src + '|' + c.name + '|' + c.lat.toFixed(4) + ',' + c.lon.toFixed(4);
+      if (seen[k]) continue;
+      seen[k] = 1; cams.push(c);
+    }
+    loaded[key] = true; busy[key] = false;
+    wfitted = false; lastFit = cams.length;   /* a new source = new ground: refit */
+    wlog('source ' + key + ': +' + rows.length + ' cams, total ' + cams.length);
+    render();
+  }
+  function load(key, cb){
+    if (!SOURCES[key] || loaded[key] || busy[key]) return;
+    if (SOURCES[key].kind === 'windy'){ loadWindy(key, cb); return; }
+    busy[key] = true; chipStat('loading ' + SOURCES[key].long + '\u2026');
+    var u = SOURCES[key].url;
+    if (SOURCES[key].kind === 'arc')
+      u += '/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=json&resultRecordCount=' + (SOURCES[key].max || 1000);
+    fetchText(u).then(function(txt){
+      var kd = SOURCES[key].kind, rows;
+      if (kd === 'tfl') rows = parseTfl(txt, key);
+      else if (kd === 'cal') rows = parseCal(txt, key);
+      else if (kd === 'fi') rows = parseFi(txt, key);
+      else if (kd === 'sg') rows = parseSg(txt, key);
+      else if (kd === 'arc') rows = parseArc(txt, key);
+      else rows = [];
+      absorbRows(rows, key);
+      if (cb) cb();
+    }).catch(function(e){
+      busy[key] = false;
+      chipStat('could not load ' + SOURCES[key].long + ' (' + (e && e.message ? e.message : e) + ')');
+      if (cb) cb();
+    });
+  }
+
+  function shownCams(){
+    var out = [];
+    for (var i = 0; i < cams.length; i++){
+      var c = cams[i];
+      if (liveOnly && !c.live) continue;
+      if (filter !== 'all' && c.src !== filter) continue;
+      out.push(c);
+    }
+    /* live (video) cameras first - they are the ones worth opening */
+    out.sort(function(x, y){ return (y.live ? 1 : 0) - (x.live ? 1 : 0); });
+    return out;
+  }
+
+  /* ---- serial loader ----------------------------------------------------
+     The Android bridge returns every reply through the single window.onTvFetch
+     callback, so two fetches in flight at once means one reply is lost. Loads
+     therefore run one at a time - each source is only a few tens of KB, so
+     serialising costs a couple of seconds and removes the race entirely. */
+  var wq = [], wqBusy = false;
+  function queueLoad(keys){
+    for (var i = 0; i < keys.length; i++){
+      var k = keys[i];
+      if (SOURCES[k] && !loaded[k] && wq.indexOf(k) < 0) wq.push(k);
+    }
+    pumpQueue();
+  }
+  function pumpQueue(){
+    if (wqBusy || !wq.length) return;
+    wqBusy = true;
+    var k = wq.shift();
+    load(k, function(){ wqBusy = false; setTimeout(pumpQueue, 700); });
+  }
+
+  function initMap(){
+    if (wmap || typeof L === 'undefined') return;
+    wmap = L.map('wcMap', {worldCopyJump: true, zoomControl: true, minZoom: 2, maxZoom: 14,
+                          preferCanvas: true, fadeAnimation: false, zoomAnimation: true});
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                {maxZoom: 14}).addTo(wmap);
+    wmap.setView([38.5, -121.3], 6);
+    wlayer = L.layerGroup().addTo(wmap);
+    wmap.on('click', function(e){
+      var p = e.latlng, best = null, bd = 1e9;
+      for (var i = 0; i < wmarks.length; i++){
+        var c = wmarks[i].c, d = Math.abs(c.lat - p.lat) + Math.abs(c.lon - p.lng);
+        if (d < bd){ bd = d; best = c; }
+      }
+      if (best && bd < 0.25) openCam(best);
+    });
+  }
+
+  var mapSig = '';
+  function drawMap(rows){
+    if (!wmap) return;
+    var sig = filter + '|' + liveOnly + '|' + rows.length;
+    if (sig === mapSig) return;
+    mapSig = sig;
+    wlayer.clearLayers(); wmarks = [];
+    /* Sample ACROSS the whole set, not the first N. The list is live-first, so
+       a plain slice(0,300) was 300 California cameras and the map never showed
+       any other continent even though 7,800 were loaded. */
+    /* Spread the marker budget PER SOURCE so a sparse region (Singapore, NZ,
+       Newfoundland) still gets dots instead of being crowded out by California. */
+    var lim = 450, cap = [], pts = [];
+    var bySrc = {}, skeys = [];
+    for (var ri = 0; ri < rows.length; ri++){
+      var sk = rows[ri].src;
+      if (!bySrc[sk]){ bySrc[sk] = []; skeys.push(sk); }
+      bySrc[sk].push(rows[ri]);
+    }
+    var budget = Math.max(18, Math.floor(lim / Math.max(1, skeys.length)));
+    for (var ki = 0; ki < skeys.length; ki++){
+      var arr = bySrc[skeys[ki]];
+      var st = arr.length > budget ? Math.ceil(arr.length / budget) : 1;
+      for (var ai = 0; ai < arr.length; ai += st) cap.push(arr[ai]);
+    }
+    for (var i = 0; i < cap.length; i++){
+      var c = cap[i];
+      var m = L.circleMarker([c.lat, c.lon], {
+        radius: c.live ? 4.5 : 3.5, stroke: false,
+        fillColor: c.live ? '#ff4d4d' : '#ffb020', fillOpacity: 0.9,
+        interactive: false
+      });
+      wlayer.addLayer(m); wmarks.push({m:m, c:c}); pts.push([c.lat, c.lon]);
+    }
+    if (!wfitted && pts.length){
+      wfitted = true;
+      try { wmap.fitBounds(L.latLngBounds(pts).pad(0.12)); } catch (e) {}
+    }
+  }
+
+  function chipStat(t){ var el = $('wcStat2'); if (el) el.textContent = t; }
+
+  var renderTimer = null;
+  function render(){
+    /* coalesce bursts: a source finishing every few hundred ms must not each
+       rebuild the whole card grid and marker layer on a low-end TV GPU */
+    if (renderTimer) return;
+    renderTimer = setTimeout(function(){ renderTimer = null; renderNow(); }, 500);
+  }
+  function renderNow(){
+    var rows = shownCams();
+    var cnt = $('wcCount'); if (cnt) cnt.textContent = rows.length.toLocaleString() + ' cams';
+    chipStat(cams.length.toLocaleString() + ' cameras loaded \u00b7 ' +
+             (function(){ var n = 0; for (var i=0;i<cams.length;i++) if (cams[i].live) n++; return n + ' live video'; })());
+    /* chips */
+    var box = $('wcChips'), h = '';
+    h += '<button data-f="all" class="' + (filter === 'all' ? 'on' : '') + '">All <i>' + cams.length + '</i></button>';
+    /* worldwide sources first, then London, then the California districts - so
+       the non-California regions are reachable without scrolling past 12 chips */
+    var order = ['fi','sg','il','ky','or_','nz','yy','nf','tfl'];
+    for (var kk in SOURCES){ if (order.indexOf(kk) < 0) order.push(kk); }
+    for (var oi = 0; oi < order.length; oi++){
+      var k = order[oi];
+      if (!SOURCES[k] || !loaded[k]) continue;
+      var n = 0; for (var i = 0; i < cams.length; i++) if (cams[i].src === k) n++;
+      if (!n) continue;
+      h += '<button data-f="' + k + '" class="' + (filter === k ? 'on' : '') + '">' + SOURCES[k].n + ' <i>' + n + '</i></button>';
+    }
+    /* not-yet-loaded regions, offered inline */
+    for (var j = 0; j < MORE.length; j++){
+      var mk = MORE[j];
+      if (loaded[mk] || busy[mk]) continue;
+      if (!moreOpen && j > 0) continue;
+      h += '<button data-l="' + mk + '" style="border-style:dashed">+ ' + SOURCES[mk].n + '</button>';
+    }
+    box.innerHTML = h;
+    box.onclick = function(e){
+      var b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.l){ load(b.dataset.l); moreOpen = true; return; }
+      filter = b.dataset.f; render();
+    };
+    /* cards */
+    var el = $('wcList');
+    if (!rows.length){
+      el.innerHTML = '<div class="wc-empty">No cameras match this filter yet.' +
+        (liveOnly ? ' Turn LIVE off to include still-image cameras.' : '') + '</div>';
+      drawMap(rows); return;
+    }
+    var out = [], max = 72;
+    for (var q = 0; q < rows.length && q < max; q++){
+      var c2 = rows[q];
+      var i2 = cams.indexOf(c2);
+      out.push('<button class="wc-card" data-i="' + i2 + '">' +
+        '<img loading="lazy" src="' + c2.img + '" alt="" onerror="this.style.opacity=.25">' +
+        '<span class="wb' + (c2.live ? '' : ' still') + '">' + (c2.live ? 'LIVE' : 'STILL') + '</span>' +
+        '<span class="wn">' + esc2(c2.name) + '</span>' +
+        '<span class="wp">' + esc2(c2.place || '') + '</span></button>');
+    }
+    if (rows.length > max) out.push('<div class="wc-empty">Showing ' + max + ' of ' + rows.length + ' \u2014 use the map or a region chip.</div>');
+    el.innerHTML = out.join('');
+    el.onclick = function(e){
+      var b = e.target.closest('.wc-card'); if (!b) return;
+      var c3 = cams[+b.dataset.i]; if (c3) openCam(c3);
+    };
+    drawMap(rows);
+  }
+
+  function esc2(s){
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function stamp(url){
+    return url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now();
+  }
+
+  function openCam(c){
+    cur = c;
+    $('wcPlayerWrap').classList.remove('hide');
+    $('wcName').textContent = c.name + (c.place ? ' \u00b7 ' + c.place : '');
+    var v = $('wcVideo'), im = $('wcImg');
+    clearInterval(shot); shot = null;
+    if (hls){ try { hls.destroy(); } catch (e) {} hls = null; }
+    try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+    if (c.live && c.hls){
+      im.style.display = 'none'; im.removeAttribute('src');
+      v.style.display = 'block';
+      var native = v.canPlayType && v.canPlayType('application/vnd.apple.mpegurl');
+      /* Same WebView limitation as the TV page: on Android, MSE (hls.js) plays
+         the AUDIO with no picture, so prefer the platform stack and fall back to
+         the native player if no picture appears. */
+      if (window.Bridge && Bridge.playStream){
+        v.src = c.hls; v.play().catch(function(){});
+        if (wcNativeTimer){ clearInterval(wcNativeTimer); }
+        var wcT0 = Date.now();
+        wcNativeTimer = setInterval(function(){
+          if (v.videoWidth > 0){ clearInterval(wcNativeTimer); wcNativeTimer = null; return; }
+          if (Date.now() - wcT0 > 6000){
+            clearInterval(wcNativeTimer); wcNativeTimer = null;
+            try { v.pause(); } catch (e) {}
+            try { Bridge.playStream(c.hls, c.name || 'Camera'); } catch (e) {}
+          }
+        }, 700);
+      }
+      else if (native){ v.src = c.hls; v.play().catch(function(){}); }
+      else if (window.Hls && window.Hls.isSupported()){
+        hls = new window.Hls({enableWorker: true});
+        hls.loadSource(c.hls); hls.attachMedia(v);
+        hls.on(window.Hls.Events.ERROR, function(ev, d){
+          if (d && d.fatal) $('wcPlayerStat').textContent = 'live stream error \u2014 camera may be offline';
+        });
+        v.play().catch(function(){});
+      } else {
+        $('wcPlayerStat').textContent = 'live video is not supported in this viewer \u2014 showing the still frame instead';
+        v.style.display = 'none'; im.style.display = 'block'; im.src = stamp(c.img);
+      }
+      if (v.style.display !== 'none') $('wcPlayerStat').textContent = 'live video (HLS) \u00b7 ' + c.place;
+    } else {
+      v.style.display = 'none';
+      im.style.display = 'block'; im.src = stamp(c.img);
+      $('wcPlayerStat').textContent = 'still frame \u00b7 auto-refresh every 15 s';
+      shot = setInterval(function(){
+        if (!cur || cur !== c) return;
+        im.src = stamp(c.img);
+        $('wcPlayerStat').textContent = 'still frame \u00b7 updated ' + new Date().toLocaleTimeString();
+      }, 15000);
+    }
+  }
+  function closeCam(){
+    clearInterval(shot); shot = null;
+    if (wcNativeTimer){ clearInterval(wcNativeTimer); wcNativeTimer = null; }
+    if (hls){ try { hls.destroy(); } catch (e) {} hls = null; }
+    var v = $('wcVideo');
+    try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+    $('wcPlayerWrap').classList.add('hide');
+    cur = null;
+  }
+
+  /* -------- page entry point, called from setView('webcam') -------- */
+  window.wcShow = function(){
+    var top = $('top'), head = document.querySelector('#wcView .wc-head');
+    if (top && head) head.style.paddingTop = (Math.round(top.getBoundingClientRect().height) + 6) + 'px';
+    initMap();
+    setTimeout(function(){ if (wmap) { try { wmap.invalidateSize(); } catch (e) {} } }, 120);
+    if (!cams.length) chipStat('loading cameras\u2026');
+    loadBundled();
+    /* if the snapshot has not arrived in 2.5 s, fall back to the live feeds */
+    setTimeout(function(){
+      var world = ['fi','sg','il','ky','or_','nz','yy','nf','alertwild','caloes'];
+      if (!cams.length) queueLoad(DEFAULT);
+      else queueLoad(world);
+    }, 2500);
+  };
+
+  $('wcHome').onclick   = function(){ setView('home'); };
+  $('wcReload').onclick = function(){
+    cams = []; seen = {}; loaded = {}; busy = {}; wfitted = false; bundled = false;
+    if (wlayer) wlayer.clearLayers();
+    render();
+    loadBundled(true);
+  };
+  $('wcLive').onclick = function(){
+    liveOnly = !liveOnly;
+    this.classList.toggle('on', liveOnly);
+    render();
+  };
+  $('wcMore').onclick = function(){ moreOpen = true; render(); };
+  $('wcWorldBtn').onclick = function(){
+    wlog('world button tapped (key ' + (WINDY_KEY ? 'present' : 'absent') + ')');
+    if (WINDY_KEY){ loaded.windy = false; load('windy'); return; }
+    $('wcWorldRow').classList.remove('hide');
+    wlog('key row shown');
+    windyState('free key at api.windy.com/keys (about 30 seconds to get one)');
+    try { $('wcWorldKey').focus(); } catch (e) {}
+  };
+  $('wcWorldHelp').onclick = function(){
+    try {
+      if (window.Bridge && Bridge.openUrl) Bridge.openUrl('https://api.windy.com/keys');
+      else window.open('https://api.windy.com/keys', '_blank');
+    } catch (e) {}
+  };
+  $('wcWorldSave').onclick = function(){
+    var v = ($('wcWorldKey').value || '').trim();
+    if (!v){ windyState('paste a key first'); return; }
+    WINDY_KEY = v;
+    wlog('key saved (len ' + v.length + ') - loading worldwide');
+    try { localStorage.setItem('wr_windy_key', v); localStorage.removeItem(WINDY_CACHE); } catch (e) {}
+    windyState('saved \u2014 loading worldwide cameras\u2026');
+    loaded.windy = false; busy.windy = false;
+    load('windy');
+  };
+  $('wcClose').onclick = closeCam;
+  if (window.Bridge && Bridge.playStream && $('wcNative')){
+    $('wcNative').style.display = 'inline-flex';
+    $('wcNative').onclick = function(){ if (cur && cur.hls) { try { Bridge.playStream(cur.hls, cur.name || 'Camera'); } catch (e) {} } };
+  }
+  $('wcShot').onclick  = function(){ if (cur) { $('wcImg').src = stamp(cur.img); } };
+  $('viewWebcam').onclick = function(){ setView('webcam'); };
+  $('ldWebcams').onclick  = function(){ setView('webcam'); };
+})();
+</script>
+
+
+<script>
+/* Pinned bottom nav for the desktop/web build, plus the active-view cue for the
+   Android/TV build, whose bar is native (activity_main.xml). Every path through
+   the app funnels through setView(), so one wrapper keeps BOTH bars correct:
+   the page bar highlights here, the native bar is told via Bridge.setNavView. */
+(function () {
+  var bar = document.getElementById('bottomnav');
+  var androidShell = !!(window.Bridge && Bridge.playStream);   /* has its own native bar */
+  function nativeHi(v) {
+    try { if (window.Bridge && Bridge.setNavView) Bridge.setNavView(v); } catch (e) {}
+  }
+  try { if (window.Bridge && Bridge.log) Bridge.log('bottomnav: ' + (androidShell ? 'native bar (page bar hidden)' : 'page bar shown')); } catch (e) {}
+  if (bar && !androidShell) {
+    bar.classList.remove('hide');
+    document.documentElement.classList.add('pnavon');
+  }
+  var hist = [], back = false;
+  function sync(v) {
+    if (bar && !androidShell) {
+      var b = bar.querySelectorAll('.bnav');
+      for (var i = 0; i < b.length; i++) b[i].classList.toggle('on', b[i].dataset.nav === v);
+    }
+    nativeHi(v);
+  }
+  var orig = window.setView;
+  window.setView = function (v) {
+    if (!back && typeof viewMode !== 'undefined' && v !== viewMode) hist.push(viewMode);
+    if (orig) orig.apply(window, arguments);
+    sync(v);
+  };
+  if (bar && !androidShell) {
+    bar.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('.bnav') : null;
+      if (!b) return;
+      var v = b.dataset.nav;
+      if (v === 'back') {
+        var prev = hist.pop();
+        if (prev) { back = true; window.setView(prev); back = false; }
+        return;
+      }
+      window.setView(v);
+    });
+  }
+  sync(typeof viewMode !== 'undefined' ? viewMode : 'home');
 })();
 </script>
 </body>
