@@ -619,7 +619,7 @@
     <div class="ld-brand">
       <h1 class="ld-title"><span class="ld-gl">🌍</span>World<span>Radio</span></h1>
       <p class="ld-tag">Live radio, HF receivers, aviation and weather — worldwide.</p>
-      <span id="ldBuild" class="ld-ver">v2.1204</span>
+      <span id="ldBuild" class="ld-ver">v2.1210</span>
     </div>
 
     <div class="ld-stats">
@@ -781,6 +781,17 @@
     background:#101722;border:1px solid #3a3f4a;border-radius:14px;padding:12px;
     box-shadow:0 18px 50px rgba(0,0,0,.6);}
   .sdr-keypad.hide,.sdr-sheet.hide{display:none;}
+  /* ---------- the SDR settings sheet must never grow past the screen ----------
+     It is fixed to the bottom with no height limit, so as fields were added it grew UPWARD
+     off the top of a phone screen - taking the X button with it, with no way to scroll back.
+     Give it a height cap + inner scrolling and pin the header (and therefore the X) to the top. */
+  #sdrSheet.sdr-sheet{max-height:calc(100vh - 92px);max-height:calc(100dvh - 92px);
+    overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-bottom:18px}
+  #sdrSheet .sdr-keyhead{position:sticky;top:0;z-index:5;background:#101722;
+    margin:-12px -12px 8px;padding:10px 12px;border-bottom:1px solid rgba(120,180,255,.14)}
+  #sdrSheet #sdrSheetClose{min-width:38px;min-height:34px;font-size:1.05rem;line-height:1}
+  @media (max-height:560px){#sdrSheet.sdr-sheet{max-height:calc(100vh - 78px);max-height:calc(100dvh - 78px)}}
+
   .sdr-keyhead{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
   .sdr-keyhead span{font-size:.7rem;color:#8a8f98;flex:1;}
   .sdr-keyhead b{font-family:ui-monospace,Consolas,monospace;font-size:1.1rem;color:#00e5ff;}

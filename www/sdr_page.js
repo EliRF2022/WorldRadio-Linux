@@ -2888,20 +2888,15 @@
     var sh = centreShiftPx(W);
     dbg.shiftPx = Math.round(sh);
     drawBand(g, W, H);
-    /* Map pixel -> FFT bin BY FREQUENCY across the receiver's WHOLE bandwidth, not just the zoom
-       window. The old mapping only had data inside the zoom window, so the strip that slid in
-       during a drag was held as a flat edge ("flat until it stops, then it picks up the noise").
-       The receiver already delivers the full bandwidth, so the incoming side is real data. */
-    var _vc = visCenterHz(), _span = visSpan();
-    var _dispLo = _vc - _span / 2;
-    var _bwLo = (S.center || 0) - (S.bw || 0) / 2, _bwSpan = S.bw || 1;
     var binAt = function (x) {
-      var hz = _dispLo + (x / W) * _span;
-      var t = (hz - _bwLo) / _bwSpan;
-      var i = Math.round(t * (n - 1));
-      if (!isFinite(i)) i = 0;
-      if (i < 0) i = 0; else if (i > n - 1) i = n - 1;
-      return i;
+      var xx = x - sh;
+      /* Out beyond the delivered frame? Hold the EDGE bin rather than skipping the column:
+         skipping left a hole that only filled in when the receiver answered, which the owner
+         saw as part of the graph vanishing and then catching up. */
+      if (xx < 0) xx = 0;
+      if (xx >= W) xx = W - 1;
+      var i = Math.floor(z0 + (xx / W) * zs);
+      return i < 0 ? 0 : (i > n - 1 ? n - 1 : i);
     };
     for (var x = 0; x < W; x++) {
       var i = binAt(x);
@@ -2940,8 +2935,6 @@
     g.lineWidth = 1.4;
     g.beginPath(); g.moveTo(W / 2, 0); g.lineTo(W / 2, H); g.stroke();
     g.restore();
-    S._sqlLineDrawn = true;
-    S._sqlLineY = y;
     drawFavs(g, W, H, true);
     /* no separate tuning cursor: this client re-centres on every tune, so it would
        always be drawn on top of the centre marker and hide it */
@@ -2961,8 +2954,8 @@
       var g2 = pendingFft; pendingFft = null;
       if (!g2) return;
       var t0 = performance.now();
-      try { drawSpectrum(g2); } catch (e) {}
-      try { drawWaterfall(g2); } catch (e) {}
+      try { drawSpectrum(g2); } catch (e) { window.__drawErr = "spectrum: " + (e && e.stack ? e.stack : e); }
+      try { drawWaterfall(g2); } catch (e) { window.__drawErr2 = "waterfall: " + (e && e.stack ? e.stack : e); }
       try { drawSpecRulerStrip(); } catch (e) {}
       var ms = performance.now() - t0;
       dbg.fftDrawn = (dbg.fftDrawn || 0) + 1;
@@ -3058,14 +3051,14 @@
       S.rowU32 = new Uint32Array(img.data.buffer);
     }
     var row = S.rowU32, tbl = WF_LUT32;
-    /* same frequency-based mapping as the spectrum, so a sliding waterfall row is real data too */
-    var _wvc = visCenterHz(), _wspan = visSpan();
-    var _wLo = _wvc - _wspan / 2;
-    var _wbwLo = (S.center || 0) - (S.bw || 0) / 2, _wbwSpan = S.bw || 1;
+    var w0 = (n / 2) * (1 - 1 / (S.zoom > 1 ? S.zoom : 1));
+    var ws = n / (S.zoom > 1 ? S.zoom : 1);
+    var wsh = centreShiftPx(bins);
     for (var x = 0; x < bins; x++) {
-      var _hz = _wLo + (x / bins) * _wspan;
-      var bi = Math.round(((_hz - _wbwLo) / _wbwSpan) * (n - 1));
-      if (!isFinite(bi)) bi = 0;
+      var xx = x - wsh;
+      if (xx < 0) xx = 0;                                /* hold the edge bin, no black stripe */
+      if (xx >= bins) xx = bins - 1;
+      var bi = Math.floor(w0 + (xx / bins) * ws);
       if (bi < 0) bi = 0; else if (bi > n - 1) bi = n - 1;
       var i = bi;
       var v = (f[i] - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
@@ -3166,6 +3159,71 @@ function drawSmeter() {
     if (!s) return;
     s.classList.toggle("hide", show === undefined ? !s.classList.contains("hide") : !show);
   }
+
+
+  /* ===================================================================
+     Make the settings sheet usable on a phone.
+     It is pinned to the bottom with no height limit, so as fields were added it grew UP off the
+     top of the screen and took the X button with it - no way to scroll, no way out. Fix:
+       - cap the height with INLINE !important styles (no stylesheet can override those),
+         measured from window.innerHeight so it is exact inside a WebView
+       - scroll inside the sheet with touch momentum
+       - a Close button stuck to the BOTTOM, where it cannot leave the screen
+       - tap the dimmed backdrop to close
+     =================================================================== */
+  function fixMenuSheet() {
+    var s = el("sdrSheet");
+    if (!s) return;
+    /* No backdrop. A dimming layer sat ABOVE the sheet (z-index/stacking), so the whole screen
+       dimmed and every tap hit the layer - which closed the menu - instead of the control.
+       Two on-sheet exits (the X and the Close button) are enough. */
+    var sc0 = el("sdrSheetScrim");
+    if (sc0 && sc0.parentNode) sc0.parentNode.removeChild(sc0);
+    if (!el("sdrSheetFoot")) {
+      var f = document.createElement("div");
+      f.id = "sdrSheetFoot";
+      f.setAttribute("style", "position:sticky;bottom:0;z-index:7;background:#101722;margin:10px -12px -18px;" +
+        "padding:8px 12px;border-top:1px solid rgba(120,180,255,.14);display:flex;gap:8px");
+      f.innerHTML = '<button type="button" id="sdrSheetClose2" style="flex:1 1 auto;min-height:44px;font-size:1rem;' +
+        'font-weight:700;background:#1a2230;color:#e8f1fa;border:1px solid #3a3f4a;border-radius:10px">\u2715 Close</button>';
+      s.appendChild(f);
+      f.querySelector("#sdrSheetClose2").onclick = function () { sheetToggle(false); };
+    }
+    var vis = !s.classList.contains("hide");
+    /* #sdrView sits at z-index 8 inside the page, so an overlay from a lower stacking context
+       (the #load splash is z-index 40) can cover the sheet. Lift the whole view while the menu
+       is open so the sheet is above anything else, and put it back when it closes. */
+    var vw = el("sdrView");
+    if (vw) {
+      if (vis) vw.style.setProperty("z-index", "500", "important");
+      else vw.style.removeProperty("z-index");
+    }
+    if (!vis) { s.__maxH = 0; return; }
+    var maxH = Math.max(170, (window.innerHeight || 600) - 96);
+    if (s.__maxH !== maxH) {
+      s.__maxH = maxH;
+      s.style.setProperty("max-height", maxH + "px", "important");
+      s.style.setProperty("z-index", "400", "important");
+      s.style.setProperty("overflow-y", "auto", "important");
+      s.style.setProperty("-webkit-overflow-scrolling", "touch", "important");
+      s.style.setProperty("overscroll-behavior", "contain", "important");
+      s.style.setProperty("touch-action", "pan-y", "important");
+      var h = s.querySelector(".sdr-keyhead");
+      if (h) {
+        h.style.setProperty("position", "sticky", "important");
+        h.style.setProperty("top", "0", "important");
+        h.style.setProperty("z-index", "8", "important");
+        h.style.setProperty("background", "#101722", "important");
+      }
+    }
+  }
+  /* apply the moment the sheet is toggled, not on the next 100 ms tick */
+  var _sheetToggleBase = sheetToggle;
+  sheetToggle = function (show) {
+    _sheetToggleBase(show);
+    try { fixMenuSheet(); } catch (e) {}
+  };
+  fixMenuSheet();
 
   function clockTick() {
     var c = el("sdrClock");
@@ -3655,7 +3713,55 @@ function drawSmeter() {
     el("sdrPickSearch").oninput = function () { pickSheetRender(this.value); };
     syncPickBtn();
   }
-  function pickerTick() { try { buildPickSheet(); buildScanPanel(); buildLiveSliders(); syncLiveSliders(); drawSqlMark(); syncPickBtn();   buildScanSettings(); scanModeLabel();
+
+  /* A draw that throws used to vanish into an empty catch and the only symptom was an empty
+     spectrum with no explanation. Show the fault instead of hiding it. */
+  function paintDrawError() {
+    var e = window.__drawErr || window.__drawErr2;
+    var box = el("sdrErrChip");
+    if (!e) { if (box) box.style.display = "none"; return; }
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "sdrErrChip";
+      box.setAttribute("style", "position:absolute;right:6px;top:6px;z-index:9;background:#3a1216;color:#ff9aa2;" +
+        "border:1px solid #7a2630;border-radius:6px;padding:2px 6px;font:10px/1.3 ui-monospace,monospace;" +
+        "max-width:72%;pointer-events:none;display:none");
+      (el("sdrView") || document.body).appendChild(box);
+    }
+    var t = String(e);
+    var m = t.match(/(ReferenceError|TypeError|RangeError|SyntaxError)[^\n]*/);
+    var line = m ? m[0] : t.slice(0, 60);
+    if (box.textContent !== line) box.textContent = "\u26a0 " + line.slice(0, 74);
+    box.style.display = "block";
+  }
+
+  /* Squelch mark on the S-meter. The slider is in the same server-side dB the meter reports, so
+     converting through the S-meter offset puts the mark exactly where the gate opens on the S scale.
+     Deliberately simple - no element caching, which is what broke the LED bargraph in 2.1205. */
+  function drawSqlMark() {
+    var tr = document.querySelector("#sdrView .sdr-track");
+    if (!tr) return;
+    var q = el("sdrSquelch");
+    var mark = el("sdrSqlMark");
+    if (!q || +q.value <= (+q.min + 1)) { if (mark) mark.style.display = "none"; return; }
+    var dbm = (+q.value) + (S.smeterOffset || 0);
+    var pct = ((dbm + 127) / 114) * 100;
+    if (!isFinite(pct) || pct < 1 || pct > 99) { if (mark) mark.style.display = "none"; return; }
+    if (!mark) {
+      mark = document.createElement("b");
+      mark.id = "sdrSqlMark";
+      mark.setAttribute("style", "position:absolute;top:0;bottom:0;width:2px;background:#ffcc55;" +
+        "box-shadow:0 0 4px rgba(255,204,85,.75);z-index:5;pointer-events:none");
+      tr.appendChild(mark);
+    }
+    mark.style.display = "block";
+    mark.style.left = Math.round((pct / 100) * (tr.clientWidth || 0) - 1) + "px";
+    dbg.sqlMark = { pct: Math.round(pct), dbm: Math.round(dbm), db: +q.value };
+  }
+  function pickerTick() { try { fixMenuSheet(); } catch (e) {}
+    try { drawSqlMark(); } catch (e) {}
+    try { paintDrawError(); } catch (e) {}
+    try { buildPickSheet(); buildScanPanel(); buildLiveSliders(); syncLiveSliders(); syncPickBtn();   buildScanSettings(); scanModeLabel();
     buildGrpSheet(); buildGrpSettings(); scanGrpLabel();
     var lb = el("sdrFavList");
     if (lb && !lb.classList.contains("hide")) {
@@ -3929,16 +4035,7 @@ function drawSmeter() {
     var q = el("sdrSquelch");
     var lo = q ? +q.min : -150;
     var off = (q && +q.value <= lo + 1);
-    if (off || !isFinite(sql)) {
-      /* switching the squelch off must clear the line at once - on the next frame it would already be
-         gone, but the canvas keeps the last painted line until then */
-      if (S._sqlLineDrawn) {
-        S._sqlLineDrawn = false;
-        if (S.lastFft) { try { drawSpectrum(S.lastFft); } catch (e) {} }
-        else if (S._sqlLineY != null) { try { g.clearRect(0, Math.round(S._sqlLineY) - 9, W, 13); } catch (e) {} }
-      }
-      dbg.sqlLine = { off: true }; return;
-    }
+    if (off || !isFinite(sql)) { dbg.sqlLine = { off: true }; return; }
     var span = (S.wfMax - S.wfMin) || 1;
     var v = (sql - S.wfMin) / span;
     if (v < 0) v = 0; if (v > 1) v = 1;
@@ -3962,29 +4059,6 @@ function drawSmeter() {
     g.fillText(lbl, bx, Math.round(y) - 1);
     g.restore();
     dbg.sqlLine = { sql: sql, y: Math.round(y), wfMin: S.wfMin, wfMax: S.wfMax, off: false };
-  }
-
-  /* squelch marker on the S-meter: the slider is in the same server-side dB the meter reports, so
-     converting through the S-meter offset puts the mark exactly where the gate opens on the S scale */
-  function drawSqlMark() {
-    var tr = document.querySelector("#sdrView .sdr-track");
-    if (!tr) return;
-    var q = el("sdrSquelch");
-    var mark = el("sdrSqlMark");
-    if (!q || +q.value <= (+q.min + 1)) { if (mark) mark.style.display = "none"; dbg.sqlMark = { off: true }; return; }
-    var dbm = (+q.value) + (S.smeterOffset || 0);
-    var pct = ((dbm + 127) / 114) * 100;
-    if (!isFinite(pct) || pct < 1 || pct > 99) { if (mark) mark.style.display = "none"; dbg.sqlMark = { out: Math.round(pct) }; return; }
-    if (!mark) {
-      mark = document.createElement("b");
-      mark.id = "sdrSqlMark";
-      mark.setAttribute("style", "position:absolute;top:0;bottom:0;width:2px;background:#ffcc55;" +
-        "box-shadow:0 0 4px rgba(255,204,85,.75);z-index:5;pointer-events:none");
-      tr.appendChild(mark);
-    }
-    mark.style.display = "block";
-    mark.style.left = Math.round((pct / 100) * (tr.clientWidth || 0) - 1) + "px";
-    dbg.sqlMark = { pct: Math.round(pct), dbm: Math.round(dbm), db: +q.value };
   }
   function patchSpectrumForSql() {
     if (window.__sqlPatched || typeof drawSpectrum !== "function") return;
@@ -4022,7 +4096,7 @@ function drawSmeter() {
       var t = el("sdrSquelch");
       if (t) { t.value = s1.value; try { t.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {} }
       var lb = el("sdrSqlLiteVal"); if (lb) lb.textContent = String(Math.round(+s1.value));
-      try { drawSqlLine(); drawSqlMark(); } catch (e) {}
+      try { drawSqlLine(); } catch (e) {}
     };
     if (v1) v1.oninput = function () {
       var t = el("sdrVol");
