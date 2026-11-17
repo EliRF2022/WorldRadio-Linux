@@ -303,6 +303,7 @@
     var stereo = !!(flags & 0x08);
     var compressed = !!(flags & 0x10);
     var squelched = !!(flags & 0x40);
+      S.squelched = squelched;   /* the scanner reads this */
     var little = !!(flags & 0x80);
     var off = stereo ? 20 : 10;
     if (u8.length - off < 8) return;
@@ -1834,7 +1835,7 @@
     var hit = favFind(hz, mode);
     if (hit) { var l = favList(); l.splice(hit.i, 1); favStore(l); }
   }
-  function favBadge() {
+  function favBadge() { try { buildFavStar(); favStarSync(); } catch (e) {}
     var l = favList(), here = favFind(S.freq, S.mode);
     var b = el("sdrFavBtn"), o = el("sdrFavOpen");
     if (b) {
@@ -1904,36 +1905,112 @@
     var box = el("sdrFavList");
     if (!box) return;
     var l = favList();
-    if (!l.length) box.innerHTML = '<div class="fav-empty">No saved stations yet. Tune something and tap \u2606 Save.</div>';
-    else box.innerHTML = l.slice().sort(function (a, b) { return a.hz - b.hz; }).map(function (f, i) {
+    /* materialise the default bank on favourites that never had one, so renaming that bank
+       carries them with it (otherwise they silently follow "whatever bank is first") */
+    var _mig = false;
+    l.forEach(function (f) { if (!f.grp) { f.grp = favGroupName(f); _mig = true; } });
+    if (_mig) favStore(l);
+    var body = el("sdrFavBody");
+    if (!body) {
+      box.innerHTML = '<div class="fav-head"></div><div id="sdrFavBody"></div>';
+      body = el("sdrFavBody");
+    }
+    var head = box.querySelector(".fav-head");
+    if (head) {
+      var scanN = l.filter(function (x) { return x.scan !== false; }).length;
+      head.innerHTML = '<b>\u2605 Favourites</b><small>' + l.length + ' saved \u00b7 ' + scanN + ' scanning</small>' +
+        '<button type="button" class="mini" id="sdrFavAll">ALL</button>' +
+        '<button type="button" class="mini" id="sdrFavNone">NONE</button>' +
+        '<button type="button" class="mini" id="sdrFavClose2">\u2715</button>';
+      var ba = el("sdrFavAll"), bn = el("sdrFavNone"), bc = el("sdrFavClose2");
+      if (ba) ba.onclick = function (ev) { ev.stopPropagation(); favAll(true); };
+      if (bn) bn.onclick = function (ev) { ev.stopPropagation(); favAll(false); };
+      if (bc) bc.onclick = function (ev) { ev.stopPropagation(); favClose(); };
+    }
+    if (!l.length) body.innerHTML = '<div class="fav-empty">No saved stations yet. Tune something and tap \u2606 star beside the frequency.</div>';
+    else body.innerHTML = l.slice().sort(function (a, b) { return a.hz - b.hz; }).map(function (f, i) {
       return '<div class="fav-row" data-hz="' + f.hz + '" data-mode="' + (f.mode || "") + '">' +
              '<span class="fav-name">\u2605 ' + String(f.name || "").replace(/</g, "&lt;") + '</span>' +
              '<span class="fav-freq">' + fmtShort(f.hz) + " " + String(f.mode || "").toUpperCase() + '</span>' +
-             '<button type="button" class="mini fav-x" data-i="' + i + '">\u2715</button></div>';
+             '<button type="button" class="fav-check' + ((f.scan === false) ? "" : " on") + '" ' +
+                    'data-hz="' + f.hz + '" data-mode="' + String(f.mode || "") + '" ' +
+                    'title="tick to include in the scanner">' + ((f.scan === false) ? "\u2610" : "\u2611") + '</button>' +
+             '<button type="button" class="fav-edit" data-hz="' + f.hz + '" data-mode="' + String(f.mode || "") + '" title="rename">\u270e</button>' +
+             '<button type="button" class="fav-grp" data-hz="' + f.hz + '" data-mode="' + String(f.mode || "") + '" title="bank">' + favGroupName(f).replace(/</g, "&lt;") + '</button>' +
+             '<button type="button" class="mini fav-x" data-hz="' + f.hz + '" data-mode="' + String(f.mode || "") + '">\u2715</button></div>';
     }).join("");
+    try { fitFavList(); } catch (e) {}
     box.querySelectorAll(".fav-row").forEach(function (row) {
       row.onclick = function (ev) {
-        if (ev.target.classList.contains("fav-x")) return;
+        if (ev.target.classList.contains("fav-x") || ev.target.classList.contains("fav-check") ||
+            ev.target.classList.contains("fav-edit") || ev.target.classList.contains("fav-grp")) return;
         setMode(row.dataset.mode || S.mode, true);
         setFreq(+row.dataset.hz, true);
         favClose();
       };
     });
-    box.querySelectorAll(".fav-x").forEach(function (b) {
+    box.querySelectorAll(".fav-edit").forEach(function (b) {
+      b.onclick = function (ev) {
+        ev.stopPropagation();
+        var hit = favFind(+b.dataset.hz, b.dataset.mode);
+        if (!hit) return;
+        var cur = (favList()[hit.i] || {}).name || fmtShort(hit.f.hz);
+        var n = window.prompt("Name for " + fmtShort(hit.f.hz) + " " + String(hit.f.mode || "").toUpperCase(), cur);
+        if (n === null) return;
+        renameFav(+b.dataset.hz, b.dataset.mode, n);
+      };
+    });
+    box.querySelectorAll(".fav-grp").forEach(function (b) {
+      b.onclick = function (ev) { ev.stopPropagation(); grpSheetOpen("assign", +b.dataset.hz, b.dataset.mode); };
+    });
+    box.querySelectorAll(".fav-check").forEach(function (b) {
       b.onclick = function (ev) {
         ev.stopPropagation();
         var l2 = favList();
-        var i = +b.dataset.i;
-        var name = (l2[i] || {}).name || "that station";
-        if (window.confirm("Remove " + name + "?")) { l2.splice(i, 1); favStore(l2); favRender(); }
+        var hit = favFind(+b.dataset.hz, b.dataset.mode);   /* match by freq+mode, never by index */
+        if (!hit) return;
+        l2[hit.i].scan = (l2[hit.i].scan === false);        /* toggle: missing means "scan" */
+        favStore(l2);
+        var was = SCAN.on;
+        if (was) scanStop();
+        favRender();
+        if (was) scanStart();
       };
     });
+    box.querySelectorAll(".fav-x").forEach(function (b) {
+      b.onclick = function (ev) {
+        ev.stopPropagation();
+        /* identify the favourite by FREQUENCY+mode. The rows are displayed sorted by frequency, so
+           a list index points at a DIFFERENT favourite than the row tapped - which is why deleting
+           asked for confirmation, said yes, and then appeared to do nothing (splice at NaN). */
+        var hit = favFind(+b.dataset.hz, b.dataset.mode);
+        if (!hit) return;
+        var l2 = favList();
+        var name = (l2[hit.i] || {}).name || fmtShort(+b.dataset.hz);
+        if (window.confirm("Delete " + name + " from favourites?")) {
+          l2.splice(hit.i, 1);
+          favStore(l2);
+          var was = SCAN.on; if (was) scanStop();
+          favRender();
+          if (was) scanStart();
+        }
+      };
+    });
+  }
+  function favAll(on) {
+    var l = favList();
+    l.forEach(function (f) { if (on) delete f.scan; else f.scan = false; });
+    favStore(l);
+    var was = SCAN.on; if (was) scanStop();
+    favRender();
+    if (was) scanStart();
   }
   function favOpen() {
     var box = el("sdrFavList");
     if (!box) return;
     favRender();
     box.classList.toggle("hide");
+    try { fitFavList(); } catch (e) {}
   }
   function favClose() { var b = el("sdrFavList"); if (b) b.classList.add("hide"); }
   function favSaveRow(show) {
@@ -2031,12 +2108,15 @@
     }
     var room = space - fixed;
     var specH, waterH;
+    /* on very short screens the canvases give up a few pixels so the squelch/volume sliders
+       stay on screen without scrolling */
+    var shortView = window.innerHeight <= 700;
     if (room < 150) {                                         /* very tight: minimum viable */
-      specH = 44; waterH = 60;
+      specH = shortView ? 34 : 44; waterH = shortView ? 44 : 60;
     } else {
-      specH = Math.round(Math.min(110, Math.max(48, room * 0.30)));
-      waterH = Math.round(Math.max(58, room - specH));
-      if (specH + waterH > room) waterH = Math.max(58, room - specH);
+      specH = Math.round(Math.min(110, Math.max(shortView ? 38 : 48, room * 0.30)));
+      waterH = Math.round(Math.max(shortView ? 44 : 58, room - specH));
+      if (specH + waterH > room) waterH = Math.max(shortView ? 44 : 58, room - specH);
     }
     spec.style.height = specH + "px";
     water.style.height = waterH + "px";
@@ -2130,6 +2210,11 @@
       "#sdrView .sdr-bottom{margin-top:4px!important;min-height:34px!important}" +
       "#sdrConnBtn{height:28px!important;font-size:12px!important}" +
       "#sdrSpecRuler{height:15px!important}" +
+      "@media (max-height:800px){#sdrLive{flex-direction:row!important;gap:6px!important;padding:3px 6px!important}" +
+      ".sdr-live .lv{flex:1 1 0;min-width:0;min-height:20px}" +
+      ".sdr-live label{width:auto!important;font-size:10px!important}" +
+      ".sdr-live b{min-width:34px!important;font-size:10.5px!important}" +
+      ".sdr-live input[type=range]{height:18px!important}}" +
       "}" +
       /* ---- S-meter as a discrete LED bar (31 segments, blue on dark) ---- */
       "#sdrView .sdr-track{height:27px!important;border-radius:5px!important;background:#141a21!important;" +
@@ -2138,6 +2223,58 @@
       "#sdrLeds{position:absolute;inset:0;display:flex;gap:1px;padding:1px;pointer-events:none;z-index:2}" +
       "#sdrLeds i{flex:1 1 0;min-width:0;background:#1c232b;border-radius:1px}" +
       "#sdrLeds i.on{background:#00aef0;box-shadow:0 0 5px rgba(0,174,240,.6)}" +
+      "#sdrLeds i.on.hi{background:#ff3b3b;box-shadow:0 0 5px rgba(255,59,59,.65)}" +
+      /* ---- auto-scale by ratio: the frequency always fits, whatever the screen ---- */
+      "#sdrFreq{white-space:nowrap!important;max-width:100%!important}" +
+      /* ---- favourites-only scanner + a readable receiver picker ---- */
+      ".sdr-scan{display:flex;align-items:center;gap:8px;margin:8px 0 0;padding:6px 8px;" +
+      "background:#101722;border:1px solid #2a2f3a;border-radius:10px}" +
+      "#sdrScanBtn{flex:0 0 auto;height:30px;padding:0 12px;border-radius:8px;border:1px solid #2a3648;" +
+      "background:#16202c;color:#9fe8ff;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap}" +
+      "#sdrScanBtn.on{background:#0f2a1a;border-color:#1f6b3f;color:#5ef2a0}" +
+      "#sdrScanInfo{flex:1 1 auto;min-width:0;font:11.5px/1.25 ui-monospace,Consolas,monospace;color:#8a94a6;" +
+      "white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      "#sdrScanInfo.hot{color:#ffcc55}" +
+      "#sdrPickBtn{flex:1 1 auto!important;min-width:0!important;height:32px!important;display:flex;" +
+      "align-items:center;gap:6px;padding:0 10px!important;border-radius:8px!important;border:1px solid #2a3648;" +
+      "background:#141c27;color:#e8f1fa;font-size:14px!important;cursor:pointer;text-align:left}" +
+      "#sdrPickBtn span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+      "#sdrPick.sdr-pick-native{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important}" +
+      "#sdrPickBtn i{flex:0 0 auto;font-style:normal;color:#7c8798}" +
+      ".sdr-picksheet{position:fixed;inset:0;z-index:60;background:rgba(4,7,12,.97);display:flex;" +
+      "flex-direction:column;padding:calc(var(--safe-t,0px) + 10px) 12px 12px}" +
+      ".sdr-picksheet.hide{display:none!important}" +
+      ".sdr-pickhead{display:flex;gap:8px;align-items:center;margin-bottom:8px}" +
+      "#sdrPickSearch{flex:1 1 auto;min-width:0;height:36px;border-radius:9px;border:1px solid #2a3648;" +
+      "background:#0d141d;color:#e8f1fa;font-size:14px;padding:0 10px}" +
+      "#sdrPickClose{flex:0 0 auto;width:36px;height:36px;border-radius:9px;border:1px solid #2a3648;" +
+      "background:#16202c;color:#e8f1fa;font-size:16px;cursor:pointer}" +
+      "#sdrPickList{flex:1 1 auto;overflow:auto;-webkit-overflow-scrolling:touch}" +
+      ".sdr-pickrow{display:flex;align-items:center;gap:8px;padding:11px 10px;border-bottom:1px solid #1b2430;" +
+      "color:#e8f1fa;font-size:14.5px;cursor:pointer}" +
+      ".sdr-pickrow:active{background:#16202c}" +
+      ".sdr-pickrow.cur{background:#12212e;color:#9fe8ff}" +
+      ".sdr-pickrow b{flex:0 0 auto;font-size:10.5px;font-weight:700;color:#0b1218;background:#7fd0ff;" +
+      "border-radius:5px;padding:2px 5px}" +
+      ".sdr-pickrow span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+      /* ---- receiver list gets its width back; a favourite star beside the frequency ---- */
+      "#sdrView .sdr-top{gap:6px!important}" +
+      "#sdrMenuBtn{flex:0 0 auto!important;min-width:26px!important;padding:0 5px!important}" +
+      "#sdrPick{flex:1 1 auto!important;min-width:0!important;max-width:none!important;" +
+      "font-size:12.5px!important;text-overflow:ellipsis!important}" +
+      "@media (max-width:440px){#sdrClock{display:none!important}}" +
+      ".sdr-favstar{flex:0 0 auto;width:36px;height:36px;border-radius:10px;background:#1a2230;" +
+      "border:1px solid #2a3648;color:#7c8798;font-size:20px;line-height:1;cursor:pointer;" +
+      "padding:0;display:flex;align-items:center;justify-content:center;transition:all .12s}" +
+      ".sdr-favstar:active{transform:scale(.94)}" +
+      ".sdr-favstar.on{color:#ffd166;border-color:#6b5a24;background:#241f10;" +
+      "box-shadow:0 0 10px rgba(255,209,102,.28)}" +
+      "@media (max-height:800px){#sdrLive{flex-direction:row!important;gap:6px!important;padding:3px 6px!important}" +
+      ".sdr-live .lv{flex:1 1 0;min-width:0;min-height:20px}" +
+      ".sdr-live label{width:auto!important;font-size:10px!important}" +
+      ".sdr-live b{min-width:34px!important;font-size:10.5px!important}" +
+      ".sdr-live input[type=range]{height:18px!important}" +
+      "#sdrScan{margin:2px 0 0!important;padding:4px 6px!important}}" +
       "";
   }
   /* The ☰ sat at the far right of the top row with margin-left:auto, which wrapped it
@@ -2283,12 +2420,21 @@
     if (!box) return;
     pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
     var n = Math.round(pct / 100 * LED_COUNT);
+    /* the +dB region reads RED, exactly like a real S-meter: a segment is hot when its centre
+       sits at or past the +10 tick (tickPct(10) = 56.14% of the span). Below that it is blue. */
+    var hot = tickPct(10);
     var kids = box.children;
     for (var i = 0; i < kids.length; i++) {
-      var want = i < n;
-      if (want !== (kids[i].className === "on")) kids[i].className = want ? "on" : "";
+      var want = "", cls;
+      if (i < n) {
+        var centre = (i + 0.5) / LED_COUNT * 100;
+        want = (centre >= hot) ? "on hi" : "on";
+      }
+      cls = kids[i].className;
+      if (cls !== want) kids[i].className = want;
     }
-    dbg.leds = { pct: Math.round(pct), lit: n, of: LED_COUNT };
+    dbg.leds = { pct: Math.round(pct), lit: n, of: LED_COUNT,
+                 hotFrom: Math.round(hot), red: [...kids].filter(function (k) { return k.className === "on hi"; }).length };
     dbg.ledTest = setLeds;   /* test hook */
   }
   function syncLeds() {
@@ -2304,7 +2450,7 @@
   function startLeds() {
     buildLeds(ledCountFor(document.querySelector("#sdrView .sdr-track")));
     syncLeds();
-    if (!window.__ledTimer) window.__ledTimer = setInterval(syncLeds, 100);
+    if (!window.__ledTimer) window.__ledTimer = setInterval(function () { syncLeds(); try { pickerTick(); } catch (e) {} }, 100);
   }
   function buildSmeterScale() {
     var meter = document.querySelector("#sdrView .sdr-meter");
@@ -2324,7 +2470,7 @@
       var tick = document.createElement("b");
       tick.setAttribute("style", "position:absolute;top:0;left:0;width:1px;" +
         "height:" + (tk[1] === 0 || tk[1] === 9 || tk[1] === 60 ? "4" : "2") + "px;" +
-        "background:" + (tk[1] >= 20 ? "rgba(255,90,90,.85)" : "rgba(214,230,246,.6)") +
+        "background:" + (tk[1] >= 10 ? "rgba(255,90,90,.85)" : "rgba(214,230,246,.6)") +
         ";transform:translateX(-50%)");
       var lab = document.createElement("i");
       /* "S0" at 0% and "+60" at 100% were half outside the meter box (the owner circled
@@ -2333,7 +2479,7 @@
       /* positions are set in px by alignSmeterScale (against the bar, inside the wider strip) */
       lab.setAttribute("style", "position:absolute;top:5px;transform:translateX(-50%);" +
         "font-style:normal;white-space:nowrap;font-weight:700;" +
-        "color:" + (tk[1] >= 20 ? "#ff5a5a" : "rgba(232,240,248,.95)"));
+        "color:" + (tk[1] >= 10 ? "#ff5a5a" : "rgba(232,240,248,.95)"));
       lab.textContent = tk[0];
       wrap.appendChild(tick);
       wrap.appendChild(lab);
@@ -2404,6 +2550,88 @@
         ".fav-name{flex:1;color:#e8eef5;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
         ".fav-freq{color:#00e5ff;font-size:12px;white-space:nowrap}" +
         ".fav-empty{opacity:.75;padding:8px 2px}" +
+      /* ---- favourites sheet: full height, check marks, ALL/NONE ---- */
+      ".sdr-favlist{max-height:84vh!important;border-radius:14px 14px 0 0!important;" +
+      "border:1px solid #2a3648;border-bottom:0;background:#0c131c}" +
+      ".fav-head{display:flex;gap:8px;align-items:center;position:sticky;top:0;background:#0c131c;" +
+      "padding:8px 4px;z-index:2}" +
+      ".fav-head b{flex:1 1 auto;color:#ffd166;font-size:14px;font-weight:700}" +
+      ".fav-head small{color:#7c8798;font-weight:600;font-size:11px}" +
+      ".fav-head button{flex:0 0 auto;font-size:11px!important;padding:5px 9px!important}" +
+      "#sdrFavBody{padding-bottom:14px}" +
+      ".fav-check{flex:0 0 auto;width:30px;height:30px;border-radius:8px;border:1px solid #33404f;" +
+      "background:#141c27;color:#6f7a8a;font-size:16px;line-height:1;cursor:pointer;padding:0}" +
+      ".fav-check.on{border-color:#6b5a24;background:#241f10;color:#ffd166}" +
+      ".fav-row{padding:8px 4px!important}" +
+      /* ---- favourites list: real scrolling + buttons that hold their text ---- */
+      ".sdr-favlist{display:flex!important;flex-direction:column!important;" +
+      "max-height:min(84vh,660px)!important;overflow:hidden!important}" +
+      ".fav-head{position:static!important;flex:0 0 auto!important;flex-wrap:wrap;row-gap:6px}" +
+      ".fav-head b{flex:1 1 auto;min-width:120px}" +
+      "#sdrFavBody{flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important;" +
+      "overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important;" +
+      "overscroll-behavior:contain!important;touch-action:pan-y!important;padding-bottom:22px!important}" +
+      ".fav-head button{flex:0 0 auto!important;height:30px!important;min-width:50px!important;width:auto!important;max-width:none!important;display:inline-flex!important;" +
+      "align-items:center!important;justify-content:center!important;font-size:11px!important;" +
+      "line-height:1!important;white-space:nowrap!important;overflow:hidden!important;padding:0 8px!important}" +
+      ".fav-check{display:inline-flex!important;align-items:center!important;justify-content:center!important;" +
+      "font-size:15px!important;line-height:1!important;overflow:hidden!important;padding:0!important}" +
+      ".fav-x{display:inline-flex!important;align-items:center!important;justify-content:center!important;" +
+      "font-size:13px!important;line-height:1!important;min-width:34px!important;height:30px!important;" +
+      "overflow:hidden!important;padding:0!important}" +
+      ".fav-row{gap:6px!important}" +
+      ".fav-scan,.fav-check,.fav-x{flex:0 0 auto!important}" +
+      /* ---- squelch + volume live on the front page, under the scanner row ---- */
+      ".sdr-live{display:flex;flex-direction:column;gap:3px;margin:5px 0 0;padding:4px 8px;" +
+      "background:#101722;border:1px solid #2a2f3a;border-radius:10px}" +
+      ".sdr-live .lv{display:flex;align-items:center;gap:7px;min-height:22px}" +
+      ".sdr-live label{flex:0 0 auto;width:52px;font-size:10.5px;font-weight:700;color:#8a94a6;" +
+      "text-transform:uppercase;letter-spacing:.6px}" +
+      ".sdr-live input[type=range]{flex:1 1 auto;min-width:0;height:20px;accent-color:#00e5ff}" +
+      ".sdr-live b{flex:0 0 auto;min-width:44px;text-align:right;font:11px/1 ui-monospace,Consolas,monospace;" +
+      "color:#9fe8ff}" +
+
+      /* ---- favourite: rename + group chips, and a group picker sheet ---- */
+      ".fav-grp{flex:0 0 auto;max-width:96px;font-size:10.5px!important;font-weight:700;padding:4px 7px!important;" +
+      "border-radius:6px!important;border:1px solid #2f4a63!important;background:#12212e!important;" +
+      "color:#9fe8ff!important;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+      ".fav-edit{flex:0 0 auto;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;" +
+      "font-size:14px!important;line-height:1!important;padding:0!important;border-radius:8px!important;" +
+      "border:1px solid #33404f!important;background:#141c27!important;color:#8fa2b8!important;cursor:pointer}" +
+      "#sdrScanGrp{flex:0 0 auto;height:30px;padding:0 9px!important;border-radius:8px!important;" +
+      "border:1px solid #2f4a63!important;background:#12212e!important;color:#9fe8ff!important;" +
+      "font-size:11.5px!important;font-weight:700;cursor:pointer;white-space:nowrap;max-width:110px;" +
+      "overflow:hidden;text-overflow:ellipsis}" +
+      ".grp-row{display:flex;gap:8px;align-items:center;padding:10px;border-bottom:1px solid #1b2430;color:#e8f1fa}" +
+      ".grp-row span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+      ".grp-row small{color:#8a94a6;font-size:11px}" +
+      ".grp-row.cur{background:#12212e;color:#9fe8ff}" +
+      "#sdrGrpSheet .sdr-pickhead b{flex:1 1 auto;color:#ffd166}" +
+
+      /* ---- our own draggable scrollbar (Android ignores ::-webkit-scrollbar) ---- */
+      "#sdrFavBar{position:absolute;right:3px;width:13px;display:none;z-index:6;touch-action:none;" +
+      "border-radius:7px;background:#0d141d}" +
+      "#sdrFavThumb{position:absolute;left:2px;right:2px;top:0;height:40px;border-radius:6px;" +
+      "background:#4d5f75;cursor:grab}" +
+      "#sdrFavThumb.drag{background:#63799a;cursor:grabbing}" +
+      "#sdrFavBody{padding-right:16px!important}" +
+
+      /* ---- fixed-height favourites box (~5 rows) with a real, draggable scrollbar ---- */
+      ".sdr-favlist{height:auto!important;max-height:none!important;overflow:hidden!important}" +
+      "#sdrFavBody{overflow-y:auto!important;scrollbar-width:thin!important;" +
+      "scrollbar-color:#4d5f75 #0d141d!important}" +
+      "#sdrFavBody::-webkit-scrollbar{width:12px}" +
+      "#sdrFavBody::-webkit-scrollbar-track{background:#0d141d;border-radius:7px}" +
+      "#sdrFavBody::-webkit-scrollbar-thumb{background:#4d5f75;border-radius:7px;" +
+      "border:3px solid #0d141d;min-height:36px}" +
+      "#sdrFavBody::-webkit-scrollbar-thumb:hover{background:#63799a}" +
+
+
+
+      ".fav-scan{flex:0 0 auto;font-size:10.5px;font-weight:700;padding:3px 7px!important;border-radius:6px!important;" +
+      "border:1px solid #33404f!important;background:#141c27!important;color:#6f7a8a!important;cursor:pointer}" +
+      ".fav-scan.on{border-color:#6b5a24!important;background:#241f10!important;color:#ffd166!important}" +
+
         ".mini.on{color:#ffd166;border-color:#ffd166}";
     }
     var b = el("sdrFavBtn"), o = el("sdrFavOpen");
@@ -2660,15 +2888,20 @@
     var sh = centreShiftPx(W);
     dbg.shiftPx = Math.round(sh);
     drawBand(g, W, H);
+    /* Map pixel -> FFT bin BY FREQUENCY across the receiver's WHOLE bandwidth, not just the zoom
+       window. The old mapping only had data inside the zoom window, so the strip that slid in
+       during a drag was held as a flat edge ("flat until it stops, then it picks up the noise").
+       The receiver already delivers the full bandwidth, so the incoming side is real data. */
+    var _vc = visCenterHz(), _span = visSpan();
+    var _dispLo = _vc - _span / 2;
+    var _bwLo = (S.center || 0) - (S.bw || 0) / 2, _bwSpan = S.bw || 1;
     var binAt = function (x) {
-      var xx = x - sh;
-      /* Out beyond the delivered frame? Hold the EDGE bin rather than skipping the column:
-         skipping left a hole that only filled in when the receiver answered, which the owner
-         saw as part of the graph vanishing and then catching up. */
-      if (xx < 0) xx = 0;
-      if (xx >= W) xx = W - 1;
-      var i = Math.floor(z0 + (xx / W) * zs);
-      return i < 0 ? 0 : (i > n - 1 ? n - 1 : i);
+      var hz = _dispLo + (x / W) * _span;
+      var t = (hz - _bwLo) / _bwSpan;
+      var i = Math.round(t * (n - 1));
+      if (!isFinite(i)) i = 0;
+      if (i < 0) i = 0; else if (i > n - 1) i = n - 1;
+      return i;
     };
     for (var x = 0; x < W; x++) {
       var i = binAt(x);
@@ -2707,6 +2940,8 @@
     g.lineWidth = 1.4;
     g.beginPath(); g.moveTo(W / 2, 0); g.lineTo(W / 2, H); g.stroke();
     g.restore();
+    S._sqlLineDrawn = true;
+    S._sqlLineY = y;
     drawFavs(g, W, H, true);
     /* no separate tuning cursor: this client re-centres on every tune, so it would
        always be drawn on top of the centre marker and hide it */
@@ -2823,14 +3058,14 @@
       S.rowU32 = new Uint32Array(img.data.buffer);
     }
     var row = S.rowU32, tbl = WF_LUT32;
-    var w0 = (n / 2) * (1 - 1 / (S.zoom > 1 ? S.zoom : 1));
-    var ws = n / (S.zoom > 1 ? S.zoom : 1);
-    var wsh = centreShiftPx(bins);
+    /* same frequency-based mapping as the spectrum, so a sliding waterfall row is real data too */
+    var _wvc = visCenterHz(), _wspan = visSpan();
+    var _wLo = _wvc - _wspan / 2;
+    var _wbwLo = (S.center || 0) - (S.bw || 0) / 2, _wbwSpan = S.bw || 1;
     for (var x = 0; x < bins; x++) {
-      var xx = x - wsh;
-      if (xx < 0) xx = 0;                                /* hold the edge bin, no black stripe */
-      if (xx >= bins) xx = bins - 1;
-      var bi = Math.floor(w0 + (xx / bins) * ws);
+      var _hz = _wLo + (x / bins) * _wspan;
+      var bi = Math.round(((_hz - _wbwLo) / _wbwSpan) * (n - 1));
+      if (!isFinite(bi)) bi = 0;
       if (bi < 0) bi = 0; else if (bi > n - 1) bi = n - 1;
       var i = bi;
       var v = (f[i] - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
@@ -3051,18 +3286,771 @@ function drawSmeter() {
     clockTick();
     setInterval(clockTick, 20000);
 
-    window.addEventListener("resize", function () { layoutCanvases(); });
+    window.addEventListener("resize", function () { layoutCanvases(); try { autoFit(); } catch (e) {} });
     status("Pick a receiver at the top, then press Power.");
   }
 
+
+  /* ---------- favourite star right beside the frequency ----------
+     The owner wants to star the frequency he is listening to without hunting for the Save button:
+     one tap adds the tuned frequency+mode, another removes it. favBadge() already runs on every
+     tune, so the star's state is driven from there and can never go stale. */
+  function buildFavStar() {
+    var row = document.querySelector("#sdrView .sdr-freqrow");
+    if (!row || el("sdrFavStar")) return;
+    var box = row.querySelector(".sdr-freqbox");
+    var b = document.createElement("button");
+    b.type = "button";
+    b.id = "sdrFavStar";
+    b.className = "sdr-favstar";
+    b.textContent = "\u2606";
+    b.title = "Save this frequency to favourites";
+    b.onclick = function (ev) {
+      ev.stopPropagation();
+      var hit = favFind(S.freq, S.mode);
+      if (hit) favRemove(S.freq, S.mode); else favAdd(S.freq, fmtShort(S.freq), S.mode);
+      S.ovSig = null;                 /* force the marker layer to redraw at once */
+      favBadge();
+      favRender();
+    };
+    if (box && box.parentNode) box.parentNode.insertBefore(b, box.nextSibling);
+    else row.appendChild(b);
+  }
+  function favStarSync() {
+    var b = el("sdrFavStar");
+    if (!b) return;
+    var here = favFind(S.freq, S.mode);
+    var want = here ? "\u2605" : "\u2606";
+    if (b.textContent !== want) b.textContent = want;
+    b.classList.toggle("on", !!here);
+    b.title = here ? "Remove from favourites" : "Save this frequency to favourites";
+  }
+
+  /* ---------- automatic scaling ----------
+     Phones, tablets and desktops all differ, and the frequency readout is the one thing that must
+     never clip: the last digit used to wrap onto a second line once the star took its width. So
+     the readout is sized from the space it actually has (measure the text, scale the font), and
+     the surrounding chrome scales from one ratio K derived from the panel width. Nothing is
+     hard-coded per device - it re-measures on every show and resize. */
+  var _mc = null;
+  function _measureCtx() {
+    if (!_mc) { try { _mc = document.createElement("canvas").getContext("2d"); } catch (e) { _mc = null; } }
+    return _mc;
+  }
+  function sdrRatio() {
+    var host = document.getElementById("sdrView") || document.body;
+    var w = host.clientWidth || 420;
+    return Math.max(0.80, Math.min(1, w / 420));
+  }
+  function fitFreqFont() {
+    var f = el("sdrFreq");
+    if (!f || !f.parentNode) return;
+    var box = f.parentNode;
+    var avail = (box.clientWidth || box.offsetWidth) - 4;
+    if (avail < 40) return;
+    /* Measure the ACTUAL text with a Range after pinning the font to a reference size. A canvas
+       measureText with a css font-family shorthand silently fell back to 10px sans, so "measure"
+       was meaningless and every screen clamped to the maximum (which then still wrapped). */
+    var REF = 40;
+    f.style.setProperty("font-size", REF + "px", "important");
+    f.style.setProperty("white-space", "nowrap", "important");
+    var nat = 1;
+    try {
+      var r = document.createRange();
+      r.selectNodeContents(f);
+      nat = r.getBoundingClientRect().width || 1;
+    } catch (e) {}
+    var size = Math.floor(REF * (avail / nat) * 0.97);
+    if (!isFinite(size) || size <= 0) size = REF;
+    size = Math.max(16, Math.min(56, size));
+    f.style.setProperty("font-size", size + "px", "important");
+    dbg.freqFitFit = { avail: Math.round(avail), naturalAt40: Math.round(nat), size: size };
+  }
+  function scaleChrome() {
+    var K = sdrRatio();
+    var tr = document.querySelector("#sdrView .sdr-track");
+    if (tr) tr.style.setProperty("height", Math.round(27 * K) + "px", "important");
+    var star = el("sdrFavStar");
+    if (star) { star.style.width = star.style.height = Math.round(36 * K) + "px";
+                star.style.fontSize = Math.round(20 * K) + "px"; }
+    var rounds = document.querySelectorAll("#sdrView .sdr-round");
+    for (var i = 0; i < rounds.length; i++) {
+      rounds[i].style.width = rounds[i].style.height = Math.round(34 * K) + "px";
+      rounds[i].style.fontSize = Math.round(24 * K) + "px";
+    }
+    var mbtn = document.querySelectorAll("#sdrView .sdr-modes button");
+    for (var j = 0; j < mbtn.length; j++)
+      mbtn[j].style.setProperty("font-size", (11.5 * K).toFixed(1) + "px", "important");
+    var sub = document.querySelector("#sdrView .sdr-sub");
+    if (sub) sub.style.setProperty("font-size", (10.5 * K).toFixed(1) + "px", "important");
+    dbg.ratio = Math.round(K * 100);
+  }
+  function autoFit() { try { scaleChrome(); fitFreqFont(); } catch (e) {} }
+
+  /* self-adjusting: watch the panel itself, so ANY size change (phone, tablet, rotation,
+     desktop resize) re-fits the frequency and the chrome without a hard-coded breakpoint */
+  function startAutoFit() {
+    try { patchSpectrumForSql(); } catch (e) {}
+    var host = document.getElementById("sdrView");
+    if (!host) return;
+    autoFit();
+    if (window.ResizeObserver && !window.sdrAutoFitObserver) {
+      window.sdrAutoFitObserver = new ResizeObserver(function () { try { autoFit(); } catch (e) {} });
+      window.sdrAutoFitObserver.observe(host);
+    }
+    if (!window.__afTimers) {
+      window.__afTimers = [setTimeout(autoFit, 120), setTimeout(autoFit, 600), setTimeout(autoFit, 1600)];
+    }
+  }
+
+  /* ================= favourites-only scanner =================
+     Scans ONLY saved favourites, in frequency order - the owner keeps police/fire channels on 800MHz
+     and wants to sit on those instead of stepping through every frequency. It tunes with the same
+     setFreq/setMode the UI uses, dwells briefly on each, and HOLDS when the channel is busy (read
+     from the S-meter fill), so a live transmission is not cut off. */
+  var SCAN = { on: false, i: 0, timer: null, dwellMs: 1600, minPct: 12, lastFreq: 0, hits: 0,
+               carrier: false, quiet: 0, forcePct: null, forceDb: null,
+               mode: "carrier", secs: 3 };
+
+  /* ---------- scan resume mode + a findable favourites button ----------
+     The owner could not find the favourites list at all: its only button lived in the audio panel.
+     It now has a button in the scanner row AND a row inside the hamburger menu, and the list shows
+     a check mark per favourite for "scan this one". Resume follows the RADIO's squelch: while the
+     audio is being squelched (nothing there) it keeps scanning; the moment the squelch opens it
+     stops and stays - or stays a programmable number of seconds in timed mode. */
+  function squelchDb() { var q = el("sdrSquelch"); var v = q ? +q.value : -150; return isFinite(v) ? v : -150; }
+  function busyNow() {
+    if (SCAN.forceDb !== null && SCAN.forceDb !== undefined) return SCAN.forceDb >= squelchDb();
+    var sq = squelchDb();
+    if (S.kiwi && S.squelched !== undefined && sq > -149) return !S.squelched;   /* the radio's own gate */
+    if (sq > -149) return (S.smeterDb || -150) >= sq;
+    return scanSignalPct() >= SCAN.minPct;
+  }
+  function scanModeLoad() {
+    try {
+      var m = localStorage.getItem("sdr_scan_mode"); if (m === "timed" || m === "carrier") SCAN.mode = m;
+      var s = +localStorage.getItem("sdr_scan_secs"); if (isFinite(s) && s >= 1 && s <= 60) SCAN.secs = s;
+    } catch (e) {}
+  }
+  function scanModeSave() {
+    try { localStorage.setItem("sdr_scan_mode", SCAN.mode); localStorage.setItem("sdr_scan_secs", String(SCAN.secs)); } catch (e) {}
+    scanModeLabel();
+  }
+  function scanModeLabel() {
+    var t = el("sdrScanMode");
+    if (t) t.textContent = SCAN.mode === "timed" ? SCAN.secs + "s" : "carrier";
+    var sel = el("sdrScanResume"), num = el("sdrScanSecs");
+    if (sel && sel.value !== SCAN.mode) sel.value = SCAN.mode;
+    if (num && +num.value !== SCAN.secs) num.value = String(SCAN.secs);
+  }
+  function buildScanSettings() {
+    var sheet = el("sdrSheet");
+    if (!sheet || el("sdrScanResume")) return;
+    var r1 = document.createElement("div"); r1.className = "sdr-row";
+    r1.innerHTML = '<label>Scan resume</label><select id="sdrScanResume">' +
+      '<option value="carrier">Carrier - hold until signal gone</option>' +
+      '<option value="timed">Timed - hold N seconds</option></select>';
+    var r2 = document.createElement("div"); r2.className = "sdr-row";
+    r2.innerHTML = '<label>Hold seconds</label><input id="sdrScanSecs" type="number" min="1" max="60" value="3">';
+    var r3 = document.createElement("div"); r3.className = "sdr-row";
+    r3.innerHTML = '<label>Favourites</label><button type="button" id="sdrFavOpenMenu" class="mini">\u2605 Open list</button>';
+    sheet.appendChild(r1); sheet.appendChild(r2); sheet.appendChild(r3);
+    el("sdrScanResume").onchange = function () { SCAN.mode = this.value; scanModeSave(); };
+    el("sdrScanSecs").onchange = function () { var v = +this.value; if (v >= 1 && v <= 60) SCAN.secs = v; else this.value = String(SCAN.secs); scanModeSave(); };
+    el("sdrFavOpenMenu").onclick = function (ev) { ev.stopPropagation(); sheetToggle(false); favOpen(); };
+    scanModeLabel();
+  }
+  function scanSignalPct() {
+    if (SCAN.forcePct !== null && SCAN.forcePct !== undefined) return SCAN.forcePct;  /* test hook */
+    var bar = el("sdrSmeterBar"), tr = document.querySelector("#sdrView .sdr-track");
+    if (!bar || !tr) return 0;
+    var tw = tr.clientWidth || 0;
+    if (!tw) return 0;
+    return (bar.getBoundingClientRect().width / tw) * 100;
+  }
+  function scanFavs() {   /* only favourites marked SCAN (missing flag = scannable) */
+    var g = scanGroup();
+    return favList().filter(function (f) {
+        if (f.scan === false) return false;
+        return g === "ALL" || favGroupName(f) === g;
+      }).sort(function (a, b) { return a.hz - b.hz; });
+  }
+  function scanInfo(txt, hot) {
+    var i = el("sdrScanInfo");
+    if (!i) return;
+    i.textContent = txt;
+    i.className = hot ? "hot" : "";
+  }
+  function scanStep() {
+    if (!SCAN.on) return;
+    var host = el("sdrView");
+    if (!host || host.classList.contains("hide")) return scanStop();
+    var l = scanFavs();
+    if (!l.length) return scanStop("Nothing marked SCAN - open your favourites and turn SCAN on");
+    if (SCAN.i >= l.length) SCAN.i = 0;
+    var f = l[SCAN.i];
+    SCAN.lastFreq = Math.round(f.hz);
+    try { setFreq(f.hz, true); } catch (e) {}
+    try { if (f.mode) setMode(f.mode, true); } catch (e) {}
+    SCAN.carrier = false; SCAN.quiet = 0;
+    scanLine(f, 0, false);
+    /* give the channel a moment to reveal a carrier, then move on if it stays quiet */
+    SCAN.timer = setTimeout(scanPulse, SCAN.dwellMs);
+  }
+  /* carrier resume: sitting on a channel that is talking means STAY, and only move on once the
+     signal has actually gone (-two quiet reads in a row-), then a short pause before the next */
+  function scanPulse() {
+    if (!SCAN.on) return;
+    var host = el("sdrView");
+    if (!host || host.classList.contains("hide")) return scanStop();
+    var l = scanFavs();
+    var f = l[SCAN.i] || {};
+    var busy = busyNow();
+    if (busy) {
+      scanLine(f, scanSignalPct(), true);
+      if (SCAN.mode === "timed" && !SCAN.carrier) {
+        /* timed: stay exactly the programmed time, then move on regardless */
+        SCAN.carrier = true;
+        SCAN.timer = setTimeout(function () {
+          scanLine(f, 0, false, "held " + SCAN.secs + "s \u2014 next");
+          SCAN.carrier = false;
+          SCAN.timer = setTimeout(function () { SCAN.i++; scanStep(); }, 600);
+        }, SCAN.secs * 1000);
+      } else {
+        SCAN.carrier = true; SCAN.quiet = 0;
+        SCAN.timer = setTimeout(scanPulse, 300);   /* carrier: keep listening */
+      }
+      return;
+    }
+    if (SCAN.carrier) {
+      SCAN.quiet++;
+      if (SCAN.quiet < 2) { SCAN.timer = setTimeout(scanPulse, 400); return; }
+      scanLine(f, 0, false, "signal gone \u2014 next");
+      SCAN.carrier = false;
+      SCAN.timer = setTimeout(function () { SCAN.i++; scanStep(); }, 1200);
+      return;
+    }
+    SCAN.timer = setTimeout(function () { SCAN.i++; scanStep(); }, SCAN.dwellMs);
+  }
+  function scanLine(f, pct, busy, note) {
+    var l = scanFavs();
+    var head = (SCAN.i + 1) + "/" + l.length + "  " + fmtShort(f.hz || S.freq) + " " +
+               String(f.mode || S.mode).toUpperCase() + "  " + (f.name || "");
+    scanInfo(head + (busy ? "   \u25b6 SIGNAL " + Math.round(pct) + "% \u2014 holding" :
+                     (note ? "   " + note : "")), !!busy);
+  }
+  function scanStart() {
+    if (SCAN.on) return;
+    var l = scanFavs();
+    if (!l.length) { scanInfo("No favourites saved - tap the \u2606 star beside the frequency first"); return; }
+    SCAN.on = true; SCAN.i = 0; SCAN.hits = 0;
+    var b = el("sdrScanBtn");
+    if (b) { b.textContent = "\u25a0 STOP"; b.classList.add("on"); }
+    scanStep();
+  }
+  function scanStop(msg) {
+    SCAN.on = false;
+    if (SCAN.timer) { clearTimeout(SCAN.timer); SCAN.timer = null; }
+    var b = el("sdrScanBtn");
+    if (b) { b.textContent = "\u25b6 SCAN FAVS"; b.classList.remove("on"); }
+    var n = scanFavs().length;
+    var all = favList().length;
+    scanInfo(msg || (n ? n + " of " + all + " favourites marked SCAN \u00b7 tap to start" +
+                         (SCAN.hits ? "  (" + SCAN.hits + " active)" : "") :
+                       (all ? "no favourites marked SCAN - open \u2605 favourites and tap SKIP/SCAN"
+                            : "No favourites yet")));
+  }
+  function scanToggle() { if (SCAN.on) scanStop(); else scanStart(); }
+  function buildScanPanel() {
+    var host = el("sdrView");
+    if (!host || el("sdrScan")) return;
+    var box = document.createElement("div");
+    box.id = "sdrScan";
+    box.className = "sdr-scan";
+    box.innerHTML = '<button type="button" id="sdrScanBtn">\u25b6 SCAN FAVS</button>' +
+                    '<button type="button" id="sdrFavOpenScan">\u2605 FAVS</button>' +
+                    '<button type="button" id="sdrScanGrp">ALL banks</button>' +
+                    '<span id="sdrScanInfo"></span>' +
+                    '<b id="sdrScanMode"></b>';
+    host.appendChild(box);
+    el("sdrScanBtn").onclick = function (ev) { ev.stopPropagation(); scanToggle(); };
+    el("sdrFavOpenScan").onclick = function (ev) { ev.stopPropagation(); favOpen(); };
+    el("sdrScanGrp").onclick = function (ev) { ev.stopPropagation(); grpSheetOpen("scan"); };
+    scanModeLoad(); scanModeLabel(); scanStop();
+  }
+  /* ================= readable receiver picker =================
+     The native <select> clipped its text on the phone (OS text scaling) and is unusable with
+     hundreds of receivers. This draws our own button in the same row plus a full-screen list with
+     a search box; picking a row sets the real <select> and fires its change event, so every bit of
+     the app's existing selection logic keeps working untouched. */
+  function pickLabel() {
+    var sel = el("sdrPick");
+    if (!sel) return "";
+    var o = sel.options[sel.selectedIndex];
+    return o ? String(o.textContent || "").replace(/^\s*\u2014\s*|\s*\u2014\s*$/g, "") : "";
+  }
+  function syncPickBtn() {
+    var sel = el("sdrPick"), btn = el("sdrPickBtn");
+    if (!sel || !btn) return;
+    var lbl = pickLabel() || "pick a receiver";
+    var s = btn.firstElementChild;
+    if (s && s.textContent !== lbl) s.textContent = lbl;
+    var cur = sel.selectedIndex;
+    if (btn.dataset.idx !== String(cur)) btn.dataset.idx = String(cur);
+  }
+  function pickSheetRender(filter) {
+    var list = el("sdrPickList"), sel = el("sdrPick");
+    if (!list || !sel) return;
+    var f = String(filter || "").toLowerCase(), out = "", n = 0;
+    for (var i = 0; i < sel.options.length; i++) {
+      var txt = String(sel.options[i].textContent || "");
+      if (i === 0 && /pick a receiver/i.test(txt)) continue;      /* the placeholder is not a choice */
+      if (f && txt.toLowerCase().indexOf(f) < 0) continue;
+      var tag = /kiwi/i.test(txt) ? '<b>Kiwi</b>' : '';
+      out += '<div class="sdr-pickrow' + (i === sel.selectedIndex ? " cur" : "") + '" data-i="' + i + '">' +
+             tag + '<span>' + txt.replace(/</g, "&lt;") + '</span></div>';
+      n++;
+      if (n > 900) break;
+    }
+    list.innerHTML = out || '<div class="sdr-pickrow">no match</div>';
+    list.querySelectorAll(".sdr-pickrow").forEach(function (r) {
+      r.onclick = function () {
+        var i2 = +r.dataset.i;
+        if (!isFinite(i2)) return;
+        sel.selectedIndex = i2;
+        try { sel.dispatchEvent(new Event("change", { bubbles: true })); } catch (e) {}
+        syncPickBtn();
+        pickSheetClose();
+      };
+    });
+  }
+  function pickSheetOpen() {
+    var sh = el("sdrPickSheet");
+    if (!sh) return;
+    sh.classList.remove("hide");
+    var s = el("sdrPickSearch");
+    if (s) { s.value = ""; }
+    pickSheetRender("");
+    if (s) { try { s.focus(); } catch (e) {} }
+  }
+  function pickSheetClose() { var sh = el("sdrPickSheet"); if (sh) sh.classList.add("hide"); }
+  function buildPickSheet() {
+    var row = document.querySelector("#sdrView .sdr-top"), sel = el("sdrPick");
+    if (!row || !sel || el("sdrPickBtn")) return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "sdrPickBtn";
+    btn.innerHTML = "<span></span><i>\u25be</i>";
+    btn.onclick = function (ev) { ev.stopPropagation(); pickSheetOpen(); };
+    row.insertBefore(btn, sel);
+    sel.classList.add("sdr-pick-native");                        /* hidden, still owns the state */
+    var sheet = document.createElement("div");
+    sheet.id = "sdrPickSheet";
+    sheet.className = "sdr-picksheet hide";
+    sheet.innerHTML = '<div class="sdr-pickhead"><input id="sdrPickSearch" type="search" ' +
+      'placeholder="search receivers" autocomplete="off"><button type="button" id="sdrPickClose">\u2715</button></div>' +
+      '<div id="sdrPickList"></div>';
+    document.body.appendChild(sheet);
+    el("sdrPickClose").onclick = pickSheetClose;
+    el("sdrPickSearch").oninput = function () { pickSheetRender(this.value); };
+    syncPickBtn();
+  }
+  function pickerTick() { try { buildPickSheet(); buildScanPanel(); buildLiveSliders(); syncLiveSliders(); drawSqlMark(); syncPickBtn();   buildScanSettings(); scanModeLabel();
+    buildGrpSheet(); buildGrpSettings(); scanGrpLabel();
+    var lb = el("sdrFavList");
+    if (lb && !lb.classList.contains("hide")) {
+      var sig = lb.offsetWidth + ":" + (el("sdrFavBody") ? el("sdrFavBody").querySelectorAll(".fav-row").length : 0);
+      if (sig !== window.__favSig) { window.__favSig = sig; fitFavList(); }
+    }
+  } catch (e) {} }
+
+  /* The list must NOT grow with the number of favourites: it is a fixed box about five rows tall
+     and everything beyond that lives behind a scrollbar you can drag with a mouse. */
+  var FAV_VISIBLE_ROWS = 5;
+  function fitFavList() {
+    var list = el("sdrFavList"), body = el("sdrFavBody");
+    if (!list || !body || list.classList.contains("hide")) return;
+    var rows = body.querySelectorAll(".fav-row");
+    var head = list.querySelector(".fav-head");
+    var hh = head ? head.offsetHeight : 0;
+    var rh = rows.length ? (rows[0].offsetHeight || 46) : 44;
+    var shown = Math.min(rows.length || 1, FAV_VISIBLE_ROWS);
+    /* size the SCROLL AREA to exactly N rows: the box then wraps it (header included) and never
+       grows with the list, whatever the header does or how many favourites exist */
+    body.style.setProperty("height", (shown * rh + 22) + "px", "important");  /* +22 = bottom padding, so a short list does not fake an overflow */
+    body.style.setProperty("flex", "0 0 auto", "important");
+    list.style.setProperty("max-height", "none", "important");
+    list.style.height = "auto";
+    try { buildFavBar(); favBarApply(); } catch (e) {}
+    dbg.favBox = { rows: rows.length, rowH: rh, headH: hh, boxH: Math.round(list.offsetHeight),
+                   shownRows: shown, scrollable: body.scrollHeight > body.clientHeight + 2 };
+  }
+
+  /* A finger/mouse-draggable scrollbar. Android WebView ignores ::-webkit-scrollbar, so the only
+     way to give a real bar you can grab is to draw one and drive scrollTop from it. */
+  function buildFavBar() {
+    var list = el("sdrFavList"), body = el("sdrFavBody");
+    if (!list || !body) return;
+    var bar = el("sdrFavBar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "sdrFavBar";
+      bar.innerHTML = '<div id="sdrFavThumb"></div>';
+      list.appendChild(bar);
+      body.addEventListener("scroll", function () { favBarApply(); }, { passive: true });
+    }
+    var thumb = el("sdrFavThumb");
+    var dragging = false, startY = 0, startTop = 0;
+    function scrollRange() { return Math.max(0, body.scrollHeight - body.clientHeight); }
+    function place() {
+      bar.style.top = body.offsetTop + "px";
+      bar.style.height = body.clientHeight + "px";
+    }
+    thumb.onpointerdown = function (ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      dragging = true; startY = ev.clientY;
+      startTop = parseFloat(thumb.style.top) || 0;
+      thumb.classList.add("drag");
+      try { thumb.setPointerCapture(ev.pointerId); } catch (e) {}
+    };
+    thumb.onpointermove = function (ev) {
+      if (!dragging) return;
+      var track = bar.clientHeight, th = thumb.offsetHeight;
+      var maxTop = Math.max(1, track - th), range = scrollRange();
+      var top = Math.max(0, Math.min(maxTop, startTop + (ev.clientY - startY)));
+      thumb.style.top = top + "px";
+      body.scrollTop = (top / maxTop) * range;
+    };
+    function endDrag() { dragging = false; thumb.classList.remove("drag"); }
+    thumb.onpointerup = endDrag; thumb.onpointercancel = endDrag; window.__favBarEnd = endDrag;
+    bar.onpointerdown = function (ev) {           /* tapping the track jumps to that spot */
+      if (ev.target === thumb) return;
+      var r = bar.getBoundingClientRect(), th = thumb.offsetHeight;
+      var top = Math.max(0, Math.min(bar.clientHeight - th, ev.clientY - r.top - th / 2));
+      thumb.style.top = top + "px";
+      body.scrollTop = (top / Math.max(1, bar.clientHeight - th)) * scrollRange();
+    };
+  }
+  function favBarApply() {
+    var list = el("sdrFavList"), body = el("sdrFavBody"), bar = el("sdrFavBar"), thumb = el("sdrFavThumb");
+    if (!list || !body || !bar || !thumb || list.classList.contains("hide")) return;
+    var range = body.scrollHeight - body.clientHeight;
+    if (range <= 2) { bar.style.display = "none"; return; }
+    bar.style.display = "block";
+    bar.style.top = body.offsetTop + "px";
+    bar.style.height = body.clientHeight + "px";
+    var track = bar.clientHeight || 1;
+    var th = Math.max(36, Math.round(body.clientHeight / body.scrollHeight * track));
+    thumb.style.height = th + "px";
+    var maxTop = Math.max(1, track - th);
+    thumb.style.top = Math.round(body.scrollTop / range * maxTop) + "px";
+    dbg.favBar = { range: range, track: track, thumb: th, top: Math.round(body.scrollTop / range * maxTop) };
+  }
+
+  /* ================= favourite names + groups/banks =================
+     Two gaps the owner hit: a favourite always showed the frequency as its name, and there was no
+     way to sort favourites into banks ("Police", "Ambulance", ...) so the scanner could work one
+     bank at a time. Groups live in sdr_scan_groups; each favourite carries a grp name; renaming a
+     group rewrites every favourite that referenced the old name. */
+  var GRP_KEY = "sdr_scan_groups", GRP_SEL = "sdr_scan_group";
+  var DEFAULT_GROUPS = ["Group 1", "Group 2", "Group 3", "Group 4"];
+  function groupsList() {
+    try {
+      var a = JSON.parse(localStorage.getItem(GRP_KEY) || "[]");
+      if (Array.isArray(a) && a.length) return a.map(function (x) { return String(x); });
+    } catch (e) {}
+    return DEFAULT_GROUPS.slice();
+  }
+  function groupsStore(a) { try { localStorage.setItem(GRP_KEY, JSON.stringify(a)); } catch (e) {} }
+  function favGroupName(f) {
+    var g = String((f && f.grp) || "").trim();
+    var l = groupsList();
+    return g && l.indexOf(g) >= 0 ? g : l[0];
+  }
+  function setFavGroup(hz, mode, name) {
+    var hit = favFind(hz, mode);
+    if (!hit) return;
+    var l = favList();
+    l[hit.i].grp = name;
+    favStore(l);
+    favRender();
+  }
+  function renameFav(hz, mode, name) {
+    var hit = favFind(hz, mode);
+    if (!hit) return;
+    var l = favList();
+    l[hit.i].name = String(name || "").slice(0, 40) || fmtShort(l[hit.i].hz);
+    favStore(l);
+    favRender();
+  }
+  function scanGroup() { try { return localStorage.getItem(GRP_SEL) || "ALL"; } catch (e) { return "ALL"; } }
+  function setScanGroup(n) {
+    try { localStorage.setItem(GRP_SEL, String(n || "ALL")); } catch (e) {}
+    scanGrpLabel();
+    var was = SCAN.on; if (was) { scanStop(); scanStart(); } else scanStop();
+  }
+  function scanGrpLabel() {
+    var b = el("sdrScanGrp");
+    if (b) b.textContent = scanGroup() === "ALL" ? "ALL banks" : scanGroup();
+  }
+  function grpCount(n) {
+    return favList().filter(function (f) { return f.scan !== false && favGroupName(f) === n; }).length;
+  }
+  function groupsRenamed(oldName, newName) {
+    if (!oldName || !newName || oldName === newName) return;
+    var l = favList(), touched = false;
+    l.forEach(function (f) { if (String(f.grp || "") === oldName) { f.grp = newName; touched = true; } });
+    if (touched) favStore(l);
+    if (scanGroup() === oldName) { try { localStorage.setItem(GRP_SEL, newName); } catch (e) {} }
+    scanGrpLabel();
+  }
+  /* --- the picker: assign a favourite to a bank, or choose the bank to scan --- */
+  var GRP_MODE = { kind: "assign", hz: 0, mode: "" };
+  function grpSheetOpen(kind, hz, mode) {
+    GRP_MODE = { kind: kind, hz: hz || 0, mode: mode || "" };
+    var sh = el("sdrGrpSheet");
+    if (!sh) return;
+    sh.classList.remove("hide");
+    grpSheetRender();
+  }
+  function grpSheetClose() { var sh = el("sdrGrpSheet"); if (sh) sh.classList.add("hide"); }
+  function grpSheetRender() {
+    var list = el("sdrGrpList");
+    if (!list) return;
+    var l = groupsList(), cur = GRP_MODE.kind === "scan" ? scanGroup() : "";
+    var html = "";
+    if (GRP_MODE.kind === "scan") {      /* "ALL" is a scan choice, not a bank to file a station in */
+      html += '<div class="grp-row' + (cur === "ALL" ? " cur" : "") + '" data-g="ALL">' +
+              '<span>ALL banks</span><small>' + favList().filter(function (f) { return f.scan !== false; }).length +
+              ' stations</small></div>';
+    }
+    l.forEach(function (g) {
+      var isCur = (GRP_MODE.kind === "scan") ? (cur === g) : false;
+      html += '<div class="grp-row' + (isCur ? " cur" : "") + '" data-g="' + g.replace(/"/g, "&quot;") + '">' +
+              '<span>' + g.replace(/</g, "&lt;") + '</span><small>' + grpCount(g) + ' scanning</small></div>';
+    });
+    if (GRP_MODE.kind === "assign") {
+      html += '<div class="grp-row" data-g="__new"><span>\u002b New bank\u2026</span><small></small></div>';
+    }
+    list.innerHTML = html;
+    list.querySelectorAll(".grp-row").forEach(function (r) {
+      r.onclick = function () {
+        var g = r.dataset.g;
+        if (g === "__new") {
+          var n = window.prompt("New bank name", "Bank " + (groupsList().length + 1));
+          if (!n) return;
+          var a = groupsList();
+          if (a.indexOf(n) < 0 && a.length < 8) a.push(String(n).slice(0, 24));
+          groupsStore(a);
+          if (GRP_MODE.kind === "assign") setFavGroup(GRP_MODE.hz, GRP_MODE.mode, String(n).slice(0, 24));
+          grpSheetRender();
+          return;
+        }
+        if (GRP_MODE.kind === "scan") { setScanGroup(g); grpSheetClose(); }
+        else { setFavGroup(GRP_MODE.hz, GRP_MODE.mode, g); grpSheetClose(); }
+      };
+    });
+  }
+  function buildGrpSheet() {
+    if (el("sdrGrpSheet")) return;
+    var sh = document.createElement("div");
+    sh.id = "sdrGrpSheet";
+    sh.className = "sdr-picksheet hide";
+    sh.innerHTML = '<div class="sdr-pickhead"><b id="sdrGrpTitle">Bank</b>' +
+                   '<button type="button" id="sdrGrpClose">\u2715</button></div><div id="sdrGrpList"></div>';
+    document.body.appendChild(sh);
+    el("sdrGrpClose").onclick = grpSheetClose;
+  }
+  /* --- bank names, editable, in the hamburger menu --- */
+  function buildGrpSettings() {
+    var sheet = el("sdrSheet");
+    if (!sheet || el("sdrGrpNames")) return;
+    var box = document.createElement("div");
+    box.id = "sdrGrpNames";
+    box.innerHTML = '<div class="sdr-row"><label>Banks</label><small id="sdrGrpHint">tap a name to rename</small></div><div id="sdrGrpInputs"></div>';
+    sheet.appendChild(box);
+    grpInputsRender();
+  }
+  function grpInputsRender() {
+    var host = el("sdrGrpInputs");
+    if (!host) return;
+    var l = groupsList();
+    host.innerHTML = l.map(function (g, i) {
+      return '<div class="sdr-row"><input type="text" data-i="' + i + '" value="' + g.replace(/"/g, "&quot;") + '">' +
+             '<button type="button" class="mini grp-del" data-i="' + i + '">\u2715</button></div>';
+    }).join("") + '<div class="sdr-row"><label></label><button type="button" class="mini" id="sdrGrpAdd">\u002b Add bank</button></div>';
+    host.querySelectorAll("input[data-i]").forEach(function (inp) {
+      inp.onchange = function () {
+        var i = +inp.dataset.i, l2 = groupsList(), old = l2[i];
+        var n = String(inp.value || "").trim().slice(0, 24);
+        if (!n) { inp.value = old; return; }
+        if (l2.indexOf(n) >= 0 && l2.indexOf(n) !== i) { inp.value = old; return; }
+        l2[i] = n;
+        groupsStore(l2);
+        groupsRenamed(old, n);
+        favRender();
+        grpInputsRender();
+      };
+    });
+    host.querySelectorAll(".grp-del").forEach(function (b) {
+      b.onclick = function () {
+        var i = +b.dataset.i, l2 = groupsList();
+        if (l2.length <= 1) return;
+        var old = l2[i];
+        l2.splice(i, 1);
+        groupsStore(l2);
+        var l3 = favList();
+        l3.forEach(function (f) { if (String(f.grp || "") === old) f.grp = l2[0]; });
+        favStore(l3);
+        if (scanGroup() === old) { try { localStorage.setItem(GRP_SEL, l2[0]); } catch (e) {} }
+        grpInputsRender(); favRender(); scanGrpLabel();
+      };
+    });
+    var add = el("sdrGrpAdd");
+    if (add) add.onclick = function () {
+      var l2 = groupsList();
+      if (l2.length >= 8) return;
+      l2.push("Group " + (l2.length + 1));
+      groupsStore(l2);
+      grpInputsRender();
+    };
+  }
+
+  /* ================= squelch line on the spectrum =================
+     Other SDRs draw the squelch threshold across the spectrum so you can see where the gate sits
+     against the noise. The squelch slider is in the same dB units as the spectrum window
+     (S.wfMin..S.wfMax), so the line is just that value mapped to a y position. Wrapped around the
+     existing draw so it lands on top of the trace every frame. */
+  function drawSqlLine() {
+    var sp = el("sdrSpectrum");
+    if (!sp || !S.sctx) return;
+    var g = S.sctx, W = sp.width, H = sp.height;
+    var sql = squelchDb();
+    var q = el("sdrSquelch");
+    var lo = q ? +q.min : -150;
+    var off = (q && +q.value <= lo + 1);
+    if (off || !isFinite(sql)) {
+      /* switching the squelch off must clear the line at once - on the next frame it would already be
+         gone, but the canvas keeps the last painted line until then */
+      if (S._sqlLineDrawn) {
+        S._sqlLineDrawn = false;
+        if (S.lastFft) { try { drawSpectrum(S.lastFft); } catch (e) {} }
+        else if (S._sqlLineY != null) { try { g.clearRect(0, Math.round(S._sqlLineY) - 9, W, 13); } catch (e) {} }
+      }
+      dbg.sqlLine = { off: true }; return;
+    }
+    var span = (S.wfMax - S.wfMin) || 1;
+    var v = (sql - S.wfMin) / span;
+    if (v < 0) v = 0; if (v > 1) v = 1;
+    var y = H - v * (H - 2);
+    g.save();
+    g.setLineDash([5, 4]);
+    g.lineWidth = 1.6;
+    g.strokeStyle = "rgba(255,204,85,.9)";
+    g.beginPath();
+    g.moveTo(0, Math.round(y) + 0.5);
+    g.lineTo(W, Math.round(y) + 0.5);
+    g.stroke();
+    g.setLineDash([]);
+    var lbl = "SQL " + Math.round(sql) + " dB";
+    g.font = "700 10px ui-monospace, Consolas, monospace";
+    var tw = g.measureText(lbl).width;
+    var bx = Math.max(2, W - tw - 8);
+    g.fillStyle = "rgba(8,12,18,.78)";
+    g.fillRect(bx - 3, Math.round(y) - 9, tw + 6, 11);
+    g.fillStyle = "#ffcc55";
+    g.fillText(lbl, bx, Math.round(y) - 1);
+    g.restore();
+    dbg.sqlLine = { sql: sql, y: Math.round(y), wfMin: S.wfMin, wfMax: S.wfMax, off: false };
+  }
+
+  /* squelch marker on the S-meter: the slider is in the same server-side dB the meter reports, so
+     converting through the S-meter offset puts the mark exactly where the gate opens on the S scale */
+  function drawSqlMark() {
+    var tr = document.querySelector("#sdrView .sdr-track");
+    if (!tr) return;
+    var q = el("sdrSquelch");
+    var mark = el("sdrSqlMark");
+    if (!q || +q.value <= (+q.min + 1)) { if (mark) mark.style.display = "none"; dbg.sqlMark = { off: true }; return; }
+    var dbm = (+q.value) + (S.smeterOffset || 0);
+    var pct = ((dbm + 127) / 114) * 100;
+    if (!isFinite(pct) || pct < 1 || pct > 99) { if (mark) mark.style.display = "none"; dbg.sqlMark = { out: Math.round(pct) }; return; }
+    if (!mark) {
+      mark = document.createElement("b");
+      mark.id = "sdrSqlMark";
+      mark.setAttribute("style", "position:absolute;top:0;bottom:0;width:2px;background:#ffcc55;" +
+        "box-shadow:0 0 4px rgba(255,204,85,.75);z-index:5;pointer-events:none");
+      tr.appendChild(mark);
+    }
+    mark.style.display = "block";
+    mark.style.left = Math.round((pct / 100) * (tr.clientWidth || 0) - 1) + "px";
+    dbg.sqlMark = { pct: Math.round(pct), dbm: Math.round(dbm), db: +q.value };
+  }
+  function patchSpectrumForSql() {
+    if (window.__sqlPatched || typeof drawSpectrum !== "function") return;
+    var orig = drawSpectrum;
+    drawSpectrum = function (f) {
+      orig(f);
+      try { drawSqlLine(); } catch (e) {}
+    };
+    window.__sqlPatched = true;
+  }
+
+  /* ================= squelch + volume on the front page =================
+     Both lived inside the hamburger sheet, which covers the waterfall while it is open - useless for
+     something you adjust WHILE listening. They are mirrored here under the scanner row and bound to
+     the same elements, so either control moves both and the squelch line follows instantly. */
+  function buildLiveSliders() {
+    var host = el("sdrScan") ? el("sdrScan").parentNode : el("sdrView");
+    if (!host || el("sdrLive")) return;
+    var box = document.createElement("div");
+    box.id = "sdrLive";
+    box.className = "sdr-live";
+    box.innerHTML =
+      '<div class="lv"><label for="sdrSqlLite">Squelch</label>' +
+      '<input id="sdrSqlLite" type="range" step="1"><b id="sdrSqlLiteVal">-150</b></div>' +
+      '<div class="lv"><label for="sdrVolLite">Volume</label>' +
+      '<input id="sdrVolLite" type="range" step="1"><b id="sdrVolLiteVal">80</b></div>';
+    var anchor = el("sdrScan");
+    if (anchor && anchor.nextSibling) host.insertBefore(box, anchor.nextSibling);
+    else host.appendChild(box);
+    var sq = el("sdrSquelch"), vol = el("sdrVol");
+    var s1 = el("sdrSqlLite"), v1 = el("sdrVolLite");
+    if (sq && s1) { s1.min = sq.min; s1.max = sq.max; }
+    if (vol && v1) { v1.min = vol.min; v1.max = vol.max; }
+    if (s1) s1.oninput = function () {
+      var t = el("sdrSquelch");
+      if (t) { t.value = s1.value; try { t.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {} }
+      var lb = el("sdrSqlLiteVal"); if (lb) lb.textContent = String(Math.round(+s1.value));
+      try { drawSqlLine(); drawSqlMark(); } catch (e) {}
+    };
+    if (v1) v1.oninput = function () {
+      var t = el("sdrVol");
+      if (t) { t.value = v1.value; try { t.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {} }
+      var lb = el("sdrVolLiteVal"); if (lb) lb.textContent = String(Math.round(+v1.value));
+    };
+    syncLiveSliders();
+  }
+  function syncLiveSliders() {
+    var sq = el("sdrSquelch"), vol = el("sdrVol");
+    var s1 = el("sdrSqlLite"), v1 = el("sdrVolLite");
+    var s1v = el("sdrSqlLiteVal"), v1v = el("sdrVolLiteVal");
+    if (sq && s1 && s1.value !== sq.value) s1.value = sq.value;
+    if (vol && v1 && v1.value !== vol.value) v1.value = vol.value;
+    if (s1v && s1) s1v.textContent = String(Math.round(+s1.value));
+    if (v1v && v1) v1v.textContent = String(Math.round(+v1.value));
+    dbg.live = { squelch: sq ? +sq.value : null, volume: vol ? +vol.value : null };
+  }
   window.sdrPage = {
     testing: { queueFft: function (arr) { queueFft(arr); },
                resetMeters: function () { dbg.zc = 0; dbg.zcN = 0; dbg.pcmPow = 0; dbg.pcmN = 0;
                                             dbg.pushed = 0; dbg.pushedSamples = 0; },
-               rateAcceptable: rateAcceptable, rdsUpdate: rdsUpdate, setModeSel: setModeSel, ledSet: setLeds,
+               rateAcceptable: rateAcceptable, rdsUpdate: rdsUpdate, setModeSel: setModeSel, ledSet: setLeds, scanForce: function (v) { SCAN.forcePct = v; },
+               scanForceDb: function (v) { SCAN.forceDb = v; }, sqlLine: drawSqlLine, sqlMark: drawSqlMark, squelchDb: squelchDb, syncLiveSliders: syncLiveSliders, groupsList: groupsList, setScanGroup: setScanGroup, scanGroup: scanGroup,
+               renameFav: renameFav, setFavGroup: setFavGroup, favGroupName: favGroupName, busyNow: busyNow, scanMode: function (m) { if (m) { SCAN.mode = m; scanModeSave(); } return SCAN.mode; }, scanFavs: scanFavs, scanSignal: scanSignalPct,
                favAdd: favAdd, favRemove: favRemove, favList: favList, favRender: favRender,
                favHitTest: favHitTest, favSaveRow: favSaveRow, drawFavs: drawFavs },
-    onShow: function () {
+    onShow: function () { startAutoFit();
       wire();
       try { fitSdr(); } catch (e) {}
       buildPick();
