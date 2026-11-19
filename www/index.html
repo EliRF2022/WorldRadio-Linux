@@ -619,7 +619,7 @@
     <div class="ld-brand">
       <h1 class="ld-title"><span class="ld-gl">🌍</span>World<span>Radio</span></h1>
       <p class="ld-tag">Live radio, HF receivers, aviation and weather — worldwide.</p>
-      <span id="ldBuild" class="ld-ver">v2.1210</span>
+      <span id="ldBuild" class="ld-ver">v2.1242</span>
     </div>
 
     <div class="ld-stats">
@@ -809,7 +809,9 @@
   .sdr-bands{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
   .sband{background:#1a2230;border:1px solid #2a2f3a;color:#cfe6ff;font-size:.72rem;
     padding:7px 10px;border-radius:8px;cursor:pointer;}
-  #sdrConnBtn{background:#00ff88;border:0;color:#04120a;font-weight:800;font-size:.82rem;
+  #sdrConnBtn.hdr{background:#00ff88;border:0;color:#04120a;font-weight:800;font-size:.68rem;padding:3px 9px;border-radius:7px;margin-left:6px;line-height:1.25;vertical-align:middle;}
+#sdrConnBtn.hdr.on{background:#ff4d4d;color:#180404;}
+#sdrConnBtn{background:#00ff88;border:0;color:#04120a;font-weight:800;font-size:.82rem;
     padding:11px 16px;border-radius:10px;cursor:pointer;}
   #sdrConnBtn.on{background:#ff4d4d;color:#180404;}
   #sdrDot{width:9px;height:9px;border-radius:50%;background:#3a3f4a;display:inline-block;
@@ -896,13 +898,16 @@
   <div class="panel-head sdr-head">
     <span class="ph-title">📻 SDR Receiver</span>
     <span id="sdrRcvName" class="ph-sub"></span>
+    <span id="sdrBuildTag" class="ph-sub" style="font:600 10px/1.3 monospace;color:#6d8a99;margin-left:4px;"></span>
     <button id="sdrMenuBtn" class="mini" title="menu" style="margin-left:auto;">☰</button>
   </div>
 
   <div class="sdr-top">
-    <select id="sdrPick"></select>
-    <span id="sdrClock" class="sdr-pill">--:--</span>
-  </div>
+      <select id="sdrPick"></select>
+      <span id="sdrClock" class="sdr-pill">--:--</span>
+      <span id="sdrDot" class="sdr-pill-dot"></span>
+      <button id="sdrConnBtn" class="hdr">Power</button>
+    </div>
 
   <div class="sdr-freqrow">
     <button id="sdrDn" class="sdr-round" title="down one step">‹</button>
@@ -931,8 +936,6 @@
   <div id="sdrStatus" class="sdr-status">Not connected.</div>
 
   <div class="sdr-bottom">
-    <button id="sdrConnBtn">Connect</button>
-    <span id="sdrDot"></span>
     <button id="sdrMenuBtn2">☰ Menu</button>
   </div>
 
@@ -1127,9 +1130,9 @@
 <div id="load"><div class="spinner"></div><span id="loadTxt">Loading stations…</span></div>
 <div id="hint" class="hint">drag to spin · pinch to zoom · tap a dot to listen</div>
 
-<script src="leaflet.js"></script>
-<script src="three.min.js"></script>
-<script src="satellite.min.js"></script>
+<script src="leaflet.js?v=2.1242"></script>
+<script src="three.min.js?v=2.1242"></script>
+<script src="satellite.min.js?v=2.1242"></script>
 <script>
 /* =====================================================================
    Desktop bridge.
@@ -5638,7 +5641,13 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
 
 /* ---------- bottom navigation bar (handled by native Android) ---------- */
 </script>
-<script src="sdr_page.js"></script>
+<script src="sdr_page.js?v=2.1242"></script>
+<script>
+/* fill the title-bar build tag from the version shown on the home page.
+   Inline and display-neutral: it touches nothing the SDR page does. */
+(function(){ try { var p=document.querySelector(".ld-ver"); var t=document.getElementById("sdrBuildTag");
+  if (p && t) t.textContent = p.textContent.trim(); } catch(e){} })();
+</script>
 <style>
   /* ---------- TV / IPTV view ---------- */
   #tvView{flex-direction:column;background:#05070d;overflow:hidden;padding:0 0 22px;min-height:0}
@@ -5856,7 +5865,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   <video id="tvVideo" controls playsinline webkit-playsinline></video>
 </div>
 
-<script src="hls.min.js"></script>
+<script src="hls.min.js?v=2.1242"></script>
 <script>
 /* ================= TV / IPTV =================================================
    Self-contained. Sources: an Xtream player_api/get.php URL (with username &

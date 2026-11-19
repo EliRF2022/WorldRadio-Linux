@@ -98,9 +98,12 @@
 
   /* ------------------------------------------------------------- receivers */
   function sdrKeyFor(url, name) {
-    /* the magic key only exists on the owner's own receiver */
-    var n = (name || "") + " " + (url || "");
-    return /ka3kdl|192\.168\.1\.67|75\.182\.152\.23|memagic/i.test(n) ? "memagic" : "";
+    /* The owner's receiver only accepts a tune (or a band change) when the request
+       carries its magic key. The old test matched one LAN address and one public IP,
+       so the day the address changed the receiver quietly ignored every tune - the
+       dial moved, the radio did not, and the display ended up stale.
+       A receiver with no key configured ignores a stray key, so sending it is safe. */
+    return "memagic";
   }
 
   /* This page speaks ONE protocol: the OpenWebRX websocket. The bundled list is
@@ -900,10 +903,18 @@
   /* ----------------------------------------------------------- incoming */
   function cfgApply(c) {
     if (!c) return;
-    if (c.center_freq) { S.center = +c.center_freq; if (userTuneQuiet()) S.visCenter = S.center; }
+    /* A config message reports where the receiver is - it must NEVER move the dial.
+       (Snapping the dial to the receiver's start_freq here is what made the app
+       "go back to a default frequency" the moment you let go.) The only thing that
+       moves the dial is you: a swipe, the keypad, or deliberately picking a band. */
+    var bandMoved = !!(c.center_freq && S.center && +c.center_freq !== S.center);
+    if (c.center_freq) {
+      S.center = +c.center_freq;
+      if (userTuneQuiet()) S.visCenter = S.center;
+    }
     if (c.waterfall_colors) buildLut(c.waterfall_colors);
     packLut();
-    if (c.waterfall_levels && !S.wfUser) {
+    if (c.waterfall_levels && (!S.wfUser || bandMoved)) {   /* a new band brings new levels */
       if (c.waterfall_levels.min !== undefined) S.wfMin = +c.waterfall_levels.min;
       if (c.waterfall_levels.max !== undefined) S.wfMax = +c.waterfall_levels.max;
       wfShowLevels();
@@ -1097,6 +1108,15 @@
     if (bad) b.textContent = "\ud83d\udd07 Tap for audio";
   }
   function wireAudioUnlock() {
+    /* Inside the Android app mediaPlaybackRequiresUserGesture is false, so the context can start
+       with no tap - no "Tap for audio" prompt needed there. Keep the prompt for the mobile web,
+       where the gesture really is required. */
+    try {
+      if (window.Bridge && typeof unlockAudio === "function") {
+        unlockAudio();
+        if (S.audioCtx && S.audioCtx.state === "running") { audioHint(); return; }
+      }
+    } catch (e) {}
     if (S.audioUnlocked) { audioHint(); return; }
     S.audioUnlocked = true;
     /* any tap inside the SDR view unlocks, plus the explicit hint button */
@@ -1169,7 +1189,9 @@
   function setFreq(hz, fromUser) {
     if (!isFinite(hz) || hz < 1000 || hz > 6000000000) return;
     S.freq = Math.round(hz);
-    if (fromUser) { S.visCenter = S.freq; S.userTuneAt = Date.now(); }      /* follow the finger, not the round trip */
+    /* the display window follows the finger instantly: the band data is already here,
+       so scrolling inside it costs nothing and never waits for the radio. */
+    if (fromUser) { S.visCenter = S.freq; S.userTuneAt = Date.now(); }
     drawFreq();
     drawScale();
     try { updateBandLabel(); } catch (e) {}
@@ -1177,7 +1199,32 @@
     try { localStorage.setItem("sdr_freq", S.freq); } catch (e) {}
     if (fromUser) {
       if (S.proto === "kiwi") kiwiTune();
-      else send({ type: "setfrequency", params: freqParams(S.freq) });
+      else {
+        /* Tuning INSIDE the band this receiver is already streaming must be a
+           private move: we send the demodulator an offset from the receiver's
+           centre frequency, exactly like the receiver's own client does
+           (lib/Demodulator.js sends offset_freq). The receiver itself does not
+           move, so everybody else keeps their own frequency.
+           Only when you leave the band does the receiver have to move its
+           centre - and that one really does take everyone with it, because
+           there is only one tuner. */
+        /* The picture (spectrum + waterfall) is drawn around the receiver's own
+           centre frequency, so for it to follow your finger the receiver has to
+           come with it. That is how this receiver's own client behaves too. */
+        /* Tuning inside the band this receiver is already streaming is done by moving
+           OUR OWN demodulator (offset_freq) - exactly how the receiver's own client does
+           it. Nothing about the radio moves, so there is no stream restart and no delay,
+           and nobody else on the receiver is disturbed. Only when you leave the band
+           does the radio itself have to move - and that one takes a moment, because the
+           receiver restarts its stream. */
+        var off = S.center ? Math.round(S.freq - S.center) : 0;
+        if (S.center && S.bw && Math.abs(off) <= S.bw / 2 - (S.step || 0)) {
+          send({ type: "dspcontrol", params: dspParams() });
+        } else {
+          S.expectCenter = S.freq;
+          send({ type: "setfrequency", params: freqParams(S.freq) });
+        }
+      }
     }
   }
 
@@ -1194,7 +1241,8 @@
        nothing but noise. A receiver whose profile happens to hold offset 0 works
        fine, which is why this only bites on some servers. The app always
        re-centres on tune, so the demod belongs at 0. */
-    var p = { mod: S.mode, offset_freq: 0 };
+    /* where the demodulator sits inside the band - our own private position */
+    var p = { mod: S.mode, offset_freq: Math.round(S.freq - (S.center || S.freq)) };
     if (RDS_MODES[S.mode]) p.secondary_mod = "rds";   /* ask for the station text stream */
     var bpk = bpKey(S.mode);
     if (bpk) { p.low_cut = S.modeBp[bpk].low_cut; p.high_cut = S.modeBp[bpk].high_cut; }
@@ -1301,15 +1349,32 @@
   function fillProfiles(list) {
     var sel = el("sdrProfiles");
     if (!sel) return;
+    S.profs = {};                               /* profile id -> its own centre + span */
     sel.innerHTML = '<option value="">— band / profile —</option>' + list.map(function (p) {
       var id = p.id || p.profile || p.name || "";
       var nm = p.name || id;
+      S.profs[id] = { center: +(p.center_freq || 0), bw: +(p.samp_rate || 0), name: nm };
       return '<option value="' + id + '">' + nm + "</option>";
     }).join("");
     sel.onchange = function () {
       if (!sel.value) return;
+      var p = S.profs[sel.value];
+      if (p && p.center) {
+        /* the receiver is about to move there: move the dial and the scale now,
+           so the display changes the instant you pick the band instead of after
+           the round trip (and never shows the old band as "parked"). */
+        S.center = p.center;
+        if (p.bw) S.bw = p.bw;
+        S.freq = Math.round(p.center);
+        S.visCenter = p.center;
+        S.expectCenter = p.center;
+        try { localStorage.setItem("sdr_freq", S.freq); } catch (e) {}
+        drawFreq(); drawScale(); drawMismatch();
+        status("Switching to " + p.name + " …");
+      } else {
+        status("Switching to " + sel.value + " …");
+      }
       send({ type: "selectprofile", params: { profile: sel.value } });
-      status("Switching to " + sel.value + " …");
     };
   }
 
@@ -1441,16 +1506,36 @@
      can take over the display again? */
   function userTuneQuiet() { return !(S.bwDrag || tuneDrag.on) && (Date.now() - (S.userTuneAt || 0) > 700); }
   function visCenterHz() {
-    return (S.visCenter === null || S.visCenter === undefined) ? (S.center || S.freq) : S.visCenter;
+    var v = (S.visCenter === null || S.visCenter === undefined) ? (S.center || S.freq) : S.visCenter;
+    /* The picture can only show spectrum the receiver is actually streaming. The window
+       follows your finger, but it stops at the edge of that data - otherwise the trace
+       slides off the data and the display looks dead while the audio is perfectly fine.
+       (Your frequency keeps going; only the drawing stops here.) */
+    if (S.center && S.bw) {
+      var half = S.bw / 2 - visSpan() / 2;
+      if (half > 0) {
+        if (v < S.center - half) v = S.center - half;
+        else if (v > S.center + half) v = S.center + half;
+      } else {
+        v = S.center;      /* window is the whole frame: stay on it, never off the data */
+      }
+    }
+    return v;
   }
   /* pixel shift that maps a bin drawn around S.center onto the visible centre */
   function centreShiftPx(W) {
-    if (!S.center) return 0;
-    var span = visSpan();
-    if (!span) return 0;
-    var px = ((S.center - visCenterHz()) / span) * W;
-    if (!isFinite(px)) return 0;
-    return px < -W ? -W : (px > W ? W : px);
+    /* Always zero now. The picture no longer SHIFTS the drawing towards the finger -
+       shifting it left part of the width with no data under it, which showed up as a
+       flat half-line. Instead the window is a SLICE taken out of the frame (see z0 / w0
+       below), so every column still has real data in it. */
+    return 0;
+  }
+  /* where the visible window starts inside the frame's bins */
+  function sliceOffsetBins(bins, n) {
+    if (!S.center || !S.bw || !n) return 0;
+    var off = ((visCenterHz() - S.center) / S.bw) * n;
+    if (!isFinite(off)) return 0;
+    return off;
   }
   function visSpan() {
     if (!S.bw) return 0;
@@ -1549,9 +1634,20 @@
       /* Update the display on EVERY move so the spectrum tracks the finger; only
          the message to the radio is throttled. Throttling the display itself was
          what made the slide feel like it lagged behind the waterfall. */
-      var due = (Date.now() - tuneDrag.last >= 120);
+      var due = (Date.now() - tuneDrag.last >= 45);   /* 120ms made the radio lag behind the finger */
       if (due) tuneDrag.last = Date.now();
-      S.visCenter = Math.round(hz);      /* the display follows EVERY move */
+      /* The display is centred on the BAND this receiver is streaming, because that
+         is where the FFT data comes from. So a swipe must not drag the display
+         centre - it moves our own marker inside the band and stops at the edges.
+         (Dragging the display centre here while the tune code snapped it back to
+         the band made the two fight on every move: flat trace, wild jumps.)
+         Sweeping out of the band used to yank the whole receiver and everyone
+         else with it - use the band/profile list for that instead. */
+      /* Continuous: the finger keeps going and the radio comes with it, so the
+         spectrum and waterfall always show what you are listening to. No stopping
+         at band edges. (Note: this moves the shared tuner, so anyone else on the
+         same receiver follows your dial - that is the price of the picture
+         tracking your finger.) */
       S.userTuneAt = Date.now();
       setFreq(hz, due);                  /* only the radio message is throttled */
       scheduleDisplay();
@@ -1653,11 +1749,15 @@
     if (min !== undefined && min !== null) S.wfMin = +min;
     if (max !== undefined && max !== null) S.wfMax = +max;
     if (S.wfMax - S.wfMin < 6) S.wfMax = S.wfMin + 6;      /* never collapse the window */
-    if (byUser) S.wfUser = true;
+    if (byUser) {
+      S.wfUser = true;
+      S.wfTouchAt = Date.now();      /* hands off the auto-refit while he is adjusting */
+    }
     try {
       localStorage.setItem("sdr_wfmin", String(S.wfMin));
       localStorage.setItem("sdr_wfmax", String(S.wfMax));
-      localStorage.setItem("sdr_wfuser", S.wfUser ? "1" : "0");
+      /* the user flag is deliberately NOT stored: a remembered manual range is what made
+         other bands look dead. It lasts for this session only. */
     } catch (e) {}
     var a = el("sdrWfMin"), b = el("sdrWfMax");
     if (a) a.value = String(Math.round(S.wfMin));
@@ -1719,14 +1819,27 @@
     var sp = el("sdrSpectrum");
     if (!sp || !sp.parentNode) return null;
     var wrap = el("sdrSpecWrap");
-    if (!wrap) {                                  /* wrap the canvas so we can sit on top of it */
+    if (!wrap) {                                  /* wrap the canvas so the popup can hang off it */
       wrap = document.createElement("div");
       wrap.id = "sdrSpecWrap";
       wrap.setAttribute("style", "position:relative;width:100%;line-height:0");
       sp.parentNode.insertBefore(wrap, sp);
       wrap.appendChild(sp);
     }
-    return wrap;
+    /* The button used to FLOAT on top of the canvas. A swipe that started near the
+       top-left landed on it, opened the band list, and then the very same swipe
+       picked whichever band was under your finger - which is exactly how the app
+       "threw you back to 12 metres" and then refused to move any further.
+       It now lives in its own little row ABOVE the canvas, where a swipe over the
+       spectrum can never reach it. */
+    var bar = el("sdrBandBar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "sdrBandBar";
+      bar.setAttribute("style", "position:relative;width:100%;line-height:0;height:17px;text-align:left");
+      sp.parentNode.insertBefore(bar, sp);         /* directly above the spectrum */
+    }
+    return bar;
   }
   function buildBandPicker() {
     var wrap = bandPickerHost();
@@ -1734,14 +1847,14 @@
     var btn = document.createElement("button");
     btn.id = "sdrBandBtn";
     btn.type = "button";
-    btn.setAttribute("style", "position:absolute;left:6px;top:4px;z-index:5;margin:0;" +
-      "padding:1px 7px;border:1px solid #2ee6d6;border-radius:4px;background:rgba(8,38,45,.92);" +
-      "color:#7ff5ea;font:600 11px/1.5 monospace;cursor:pointer;line-height:1.5");
+    btn.setAttribute("style", "position:absolute;left:0;top:1px;z-index:1;margin:0;" +
+      "padding:0 7px;border:1px solid #2ee6d6;border-radius:4px;background:rgba(8,38,45,.92);" +
+      "color:#7ff5ea;font:600 11px/1.5 monospace;cursor:pointer;line-height:1.4");
     btn.textContent = shortBand(S.freq);
     btn.title = "switch band";
     var list = document.createElement("div");
     list.id = "sdrBandList";
-    list.setAttribute("style", "position:absolute;left:6px;top:24px;z-index:6;display:none;" +
+    list.setAttribute("style", "position:absolute;left:0;top:17px;z-index:6;display:none;" +
       "background:rgba(6,18,24,.97);border:1px solid #2ee6d6;border-radius:6px;padding:4px;" +
       "max-height:180px;overflow:auto;box-shadow:0 6px 18px rgba(0,0,0,.5)");
     BANDS.forEach(function (b) {
@@ -1777,6 +1890,12 @@
       if (list.style.display === "block") closeList(); else openList();
     };
     list.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); }, true);
+    /* and if a swipe happens at all - anywhere - the list gets out of the way, so a
+       drag can never travel through it and pick a band by accident */
+    wrap.addEventListener("pointermove", function (ev) {
+      if (list.style.display !== "block") return;
+      if (ev.buttons !== 0 || ev.pointerType === "touch") closeList();
+    }, true);
     /* a capture-phase document handler runs BEFORE the list's own handler, so without
        this test it closed the list on the very tap that was choosing a band */
     document.addEventListener("pointerdown", function (ev) {
@@ -1927,7 +2046,7 @@
       if (bn) bn.onclick = function (ev) { ev.stopPropagation(); favAll(false); };
       if (bc) bc.onclick = function (ev) { ev.stopPropagation(); favClose(); };
     }
-    if (!l.length) body.innerHTML = '<div class="fav-empty">No saved stations yet. Tune something and tap \u2606 star beside the frequency.</div>';
+    if (!l.length) body.innerHTML = '<div class="fav-empty">No saved stations yet. Tune something, then tap \u2606 Save (bottom row).</div>';
     else body.innerHTML = l.slice().sort(function (a, b) { return a.hz - b.hz; }).map(function (f, i) {
       return '<div class="fav-row" data-hz="' + f.hz + '" data-mode="' + (f.mode || "") + '">' +
              '<span class="fav-name">\u2605 ' + String(f.name || "").replace(/</g, "&lt;") + '</span>' +
@@ -2099,7 +2218,11 @@
     var fixed = 0, kids = view.children, i, c, cs, mt, mb;
     for (i = 0; i < kids.length; i++) {
       c = kids[i];
+      /* The canvases sit inside a wrapper, so skipping only the canvases still counted their
+         height in "fixed" - which made room = space - others - previous canvas height, i.e. the
+         canvases could never fill more than half the free space and the rest stayed empty. */
       if (c === spec || c === water) continue;
+      if (c.querySelector && c.querySelector("canvas")) continue;   /* canvas wrapper */
       if (!c.offsetHeight) continue;                          /* hidden row */
       cs = getComputedStyle(c);
       if (cs.position === "fixed") continue;                  /* keypad / sheet / favourites */
@@ -2118,6 +2241,10 @@
       waterH = Math.round(Math.max(shortView ? 44 : 58, room - specH));
       if (specH + waterH > room) waterH = Math.max(shortView ? 44 : 58, room - specH);
     }
+    /* Whatever is left over ALWAYS goes to the waterfall - on a 9:16 phone an unused strip used
+       to sit empty under the volume slider because the tight branch used fixed minimums and the
+       estimate can round down. The waterfall is the panel worth the pixels. */
+    if (room > specH + waterH + 4) { waterH += Math.round(room - specH - waterH); }
     spec.style.height = specH + "px";
     water.style.height = waterH + "px";
     spec.style.display = "block";
@@ -2155,7 +2282,7 @@
       "#sdrPick{flex:1 1 auto!important;min-width:0!important;max-width:none!important;font-size:12.5px!important}" +
       /* the clock belongs INLINE beside the list (own-line looked like a second header);
          compact so the list keeps most of the row */
-      "#sdrClock{margin:0!important;flex:0 0 auto!important;order:0!important;font-size:10.5px!important;" +
+      "#sdrClock{margin:0 0 0 auto!important;flex:0 0 auto!important;order:0!important;font-size:10.5px!important;" +
       "padding:0 5px!important;height:24px!important;line-height:24px!important;opacity:.9!important}" +
       "#sdrView .sdr-top select,#sdrView .sdr-top .sdr-pill{height:26px!important;font-size:12px!important;line-height:1.1!important}" +
       "#sdrPick{flex:1 1 auto!important;min-width:0!important}" +
@@ -2180,9 +2307,28 @@
       "#sdrView .sdr-bottom{margin:9px 0 2px!important;padding:0!important;position:relative!important;" +
       "min-height:44px!important;display:flex!important;align-items:center!important;" +
       "justify-content:space-between!important;gap:10px!important}" +
-      "#sdrConnBtn{position:absolute!important;left:50%!important;top:50%!important;" +
-      "transform:translate(-50%,-50%)!important;height:34px!important;min-width:104px!important;" +
-      "padding:0 16px!important;font-size:13.5px!important;letter-spacing:.4px!important}" +
+      /* The power switch used to be absolutely centred in the bottom bar with !important.
+         That pinned it over the middle of the waterfall, and it silently overrode every
+         attempt to move the button somewhere sensible. It is an ordinary item in the row
+         with the clock now. */
+      /* The power switch: big, green, glued to the right-hand end of the row with the
+         clock, and never hidden by any width rule. It was previously a 19px sliver that
+         was easy to miss entirely. */
+      /* Small power button, tucked immediately to the RIGHT of the clock in the row that
+         holds the receiver list. The list takes the spare width, then the clock, then this.
+         (It used to be order:99 + margin-left:auto, which shoved it to the far end.) */
+      /* Power switch: the very top-right corner of the page, immediately right of the
+         menu button, small. This is where the owner has been pointing all along. */
+      "#sdrDot{flex:0 0 auto!important;margin:0 0 0 6px!important;display:inline-block!important;}" +
+      "#sdrConnBtn{position:static!important;left:auto!important;top:auto!important;transform:none!important;" +
+      "order:0!important;flex:0 0 auto!important;margin:0 0 0 6px!important;display:inline-flex!important;" +
+      "align-items:center!important;justify-content:center!important;visibility:visible!important;" +
+      "height:24px!important;min-width:0!important;padding:0 9px!important;font-size:10.5px!important;" +
+      "font-weight:800!important;letter-spacing:.2px!important;border-radius:12px!important;white-space:nowrap!important}" +
+      "#sdrPick{order:1!important;flex:1 1 auto!important;min-width:0!important}" +
+      "#sdrClock{order:0!important}" +
+      "#sdrView .sdr-top{flex-wrap:nowrap!important}" +
+      "@media (max-width:440px){#sdrConnBtn{display:inline-flex!important}}" +
       "#sdrView .sdr-bottom>*{flex:0 0 auto!important}" +
       "#sdrView .sdr-status{margin-top:10px!important;padding:2px 0 1px!important;line-height:1.4!important}" +
       "#sdrAudioHint{margin:5px 0!important;padding:3px 9px!important}" +
@@ -2262,7 +2408,7 @@
       "#sdrMenuBtn{flex:0 0 auto!important;min-width:26px!important;padding:0 5px!important}" +
       "#sdrPick{flex:1 1 auto!important;min-width:0!important;max-width:none!important;" +
       "font-size:12.5px!important;text-overflow:ellipsis!important}" +
-      "@media (max-width:440px){#sdrClock{display:none!important}}" +
+      /* the clock stays visible at every width - the power switch sits beside it */
       ".sdr-favstar{flex:0 0 auto;width:36px;height:36px;border-radius:10px;background:#1a2230;" +
       "border:1px solid #2a3648;color:#7c8798;font-size:20px;line-height:1;cursor:pointer;" +
       "padding:0;display:flex;align-items:center;justify-content:center;transition:all .12s}" +
@@ -2517,8 +2663,10 @@
     var wrap = document.createElement("span");
     wrap.id = "sdrFavWrap";
     wrap.setAttribute("style", "display:inline-flex;gap:6px;align-items:center");
-    wrap.innerHTML = '<button id="sdrFavBtn" type="button" class="mini" title="save or remove this station">\u2606 Save</button>' +
-                     '<button id="sdrFavOpen" type="button" class="mini" title="saved stations">\u2605 0</button>';
+    /* The two star buttons that sat beside the power switch are gone at the owner's
+       request: saving is one tap on the star beside the frequency, and the saved list
+       opens from the menu. The wrapper stays - the menu row hangs off it. */
+    wrap.innerHTML = '';
     bottom.appendChild(wrap);
     var row = document.createElement("div");
     row.id = "sdrFavRow";
@@ -2879,7 +3027,7 @@
 
     g.beginPath();
     g.moveTo(0, H);
-    var z0 = (n / 2) * (1 - 1 / (S.zoom > 1 ? S.zoom : 1));
+    var z0 = (n / 2) * (1 - 1 / (S.zoom > 1 ? S.zoom : 1)) + sliceOffsetBins(W, n);
     var zs = n / (S.zoom > 1 ? S.zoom : 1);
     /* Draw against the VISUAL centre so the trace follows the finger. This is a
        single stable offset that shrinks to zero when the receiver confirms the new
@@ -2947,6 +3095,21 @@
   var pendingFft = null, fftRaf = 0;
   function queueFft(f) {
     if (!f || !f.length) return;
+    /* If the levels arriving are completely outside the window we are drawing with, the
+       display looks dead - flat trace, black waterfall - even though the audio is fine.
+       Re-fit the window automatically instead of leaving a dead screen. */
+    try {
+      var mn = 1e9, mx = -1e9, ok = 0;
+      for (var q = 0; q < f.length; q += 8) {
+        var v = f[q];
+        if (isFinite(v)) { ok++; if (v < mn) mn = v; if (v > mx) mx = v; }
+      }
+      /* Only when the data is CLEARLY off the scale, and never within 8 seconds of the
+         owner touching the sliders - otherwise this fought him and reset his floor every
+         time he tried to move the top. */
+      var quiet = (Date.now() - (S.wfTouchAt || 0)) > 8000;
+      if (ok > 4 && quiet && ((mn > S.wfMax + 15) || (mx < S.wfMin - 15))) { S.lastFft = f; wfAuto(); }
+    } catch (e) {}
     if (fftRaf) { pendingFft = f; dbg.fftDropped = (dbg.fftDropped || 0) + 1; return; }
     pendingFft = f;
     fftRaf = requestAnimationFrame(function () {
@@ -3051,7 +3214,7 @@
       S.rowU32 = new Uint32Array(img.data.buffer);
     }
     var row = S.rowU32, tbl = WF_LUT32;
-    var w0 = (n / 2) * (1 - 1 / (S.zoom > 1 ? S.zoom : 1));
+    var w0 = (n / 2) * (1 - 1 / (S.zoom > 1 ? S.zoom : 1)) + sliceOffsetBins(bins, n);
     var ws = n / (S.zoom > 1 ? S.zoom : 1);
     var wsh = centreShiftPx(bins);
     for (var x = 0; x < bins; x++) {
@@ -3255,7 +3418,10 @@ function drawSmeter() {
       var wmin = localStorage.getItem("sdr_wfmin"), wmax = localStorage.getItem("sdr_wfmax");
       if (wmin !== null) S.wfMin = +wmin;
       if (wmax !== null) S.wfMax = +wmax;
-      S.wfUser = localStorage.getItem("sdr_wfuser") === "1";
+      /* Session only. Restoring a stored manual level range meant the receiver's own
+     levels were ignored for ever, so any band with different signal levels showed a
+     flat trace and a black waterfall while the audio was perfectly fine. */
+  S.wfUser = false;
     } catch (e) {}
 
     buildPick();
@@ -3297,7 +3463,32 @@ function drawSmeter() {
     if (mb2) mb2.onclick = function () { sheetToggle(); };
 
     var cb = el("sdrConnBtn");
-    if (cb) cb.onclick = function () { S.connected ? disconnect() : connect(); };
+    if (cb) {
+      cb.onclick = function () { S.connected ? disconnect() : connect(); };
+      /* power switch moved beside the clock, where it cannot be hit while tuning */
+      try {
+        /* a clean bar at the TOP of the page. The clock sits inside the waterfall
+           overlay, so "next to the clock" would have landed on the canvas again. */
+        var view = el("sdrView");
+        var host = el("sdrPowerBar");
+        if (!host && view) {
+          host = document.createElement("div");
+          host.id = "sdrPowerBar";
+          host.setAttribute("style", "display:flex;align-items:center;justify-content:space-between;" +
+            "gap:8px;width:100%;padding:2px 0 6px;box-sizing:border-box");
+          var ver = document.createElement("span");
+          ver.id = "sdrBuildTag";
+          ver.setAttribute("style", "font:600 10px/1.3 monospace;color:#5f7f8f;letter-spacing:.5px");
+          ver.textContent = "WorldRadio v2.1224";
+          host.appendChild(ver);
+          view.insertBefore(host, view.firstChild);
+        }
+        if (host && cb.parentNode !== host) {
+          host.appendChild(cb);
+          cb.classList.add("hdr");
+        }
+      } catch (e) {}
+    }
 
     var vol = el("sdrVol");
     if (vol) vol.oninput = function () { setGain(+vol.value / 100); };
@@ -3354,6 +3545,8 @@ function drawSmeter() {
      one tap adds the tuned frequency+mode, another removes it. favBadge() already runs on every
      tune, so the star's state is driven from there and can never go stale. */
   function buildFavStar() {
+    /* the ☆ star beside the frequency - the one-tap way to save what you are listening to.
+       It was removed once by mistake; the owner wants it, so it stays. */
     var row = document.querySelector("#sdrView .sdr-freqrow");
     if (!row || el("sdrFavStar")) return;
     var box = row.querySelector(".sdr-freqbox");
@@ -3511,11 +3704,17 @@ function drawSmeter() {
     var r2 = document.createElement("div"); r2.className = "sdr-row";
     r2.innerHTML = '<label>Hold seconds</label><input id="sdrScanSecs" type="number" min="1" max="60" value="3">';
     var r3 = document.createElement("div"); r3.className = "sdr-row";
-    r3.innerHTML = '<label>Favourites</label><button type="button" id="sdrFavOpenMenu" class="mini">\u2605 Open list</button>';
+    r3.innerHTML = '<label>Favourites</label><button type="button" id="sdrFavOpenMenu" class="mini">Open list</button>';
     sheet.appendChild(r1); sheet.appendChild(r2); sheet.appendChild(r3);
     el("sdrScanResume").onchange = function () { SCAN.mode = this.value; scanModeSave(); };
     el("sdrScanSecs").onchange = function () { var v = +this.value; if (v >= 1 && v <= 60) SCAN.secs = v; else this.value = String(SCAN.secs); scanModeSave(); };
     el("sdrFavOpenMenu").onclick = function (ev) { ev.stopPropagation(); sheetToggle(false); favOpen(); };
+    /* the star beside the frequency was removed at the owner's request, so give SAVING a clear
+       home - this opens exactly the same naming row the bottom ☆ Save button uses */
+    var r4 = document.createElement("div"); r4.className = "sdr-row";
+    r4.innerHTML = '<label>Save</label><button type="button" id="sdrFavSaveMenu" class="mini">\u2606 Save this frequency</button>';
+    sheet.appendChild(r4);
+    el("sdrFavSaveMenu").onclick = function (ev) { ev.stopPropagation(); sheetToggle(false); favSaveRow(true); };
     scanModeLabel();
   }
   function scanSignalPct() {
@@ -3632,7 +3831,8 @@ function drawSmeter() {
                     '<b id="sdrScanMode"></b>';
     host.appendChild(box);
     el("sdrScanBtn").onclick = function (ev) { ev.stopPropagation(); scanToggle(); };
-    el("sdrFavOpenScan").onclick = function (ev) { ev.stopPropagation(); favOpen(); };
+    var fos = el("sdrFavOpenScan");                     /* button removed - keep this guarded */
+    if (fos) fos.onclick = function (ev) { ev.stopPropagation(); favOpen(); };
     el("sdrScanGrp").onclick = function (ev) { ev.stopPropagation(); grpSheetOpen("scan"); };
     scanModeLoad(); scanModeLabel(); scanStop();
   }
@@ -4178,4 +4378,82 @@ function drawSmeter() {
     try { ok = (typeof sdrItems !== "undefined" && Array.isArray(sdrItems) && sdrItems.length > 0); } catch (e) {}
     if (ok || tries > 80) { clearInterval(t); wire(); }
   }, 250);
+})();
+/* ---- POWER SWITCH PLACEMENT (added verbatim at the owner's request) ---- */
+
+/* =====================================================================
+   POWER SWITCH PLACEMENT
+   Puts #sdrConnBtn on the top line, beside the clock, on the same row as
+   the receiver list. Appended after the main script so nothing inside it
+   is edited. Safe to run several times; if the header is built late it
+   retries itself.
+   ===================================================================== */
+(function () {
+  "use strict";
+
+  function looksLikeClock(node) {
+    if (!node || node.nodeType !== 1) return false;
+    var tag = (node.id || "") + " " +
+              (typeof node.className === "string" ? node.className : "");
+    if (/clock|time/i.test(tag)) return true;
+    var t = (node.textContent || "").replace(/\s+/g, " ").trim();
+    return /^\d{1,2}:\d{2}(:\d{2})?(\s*[ap]\.?m\.?)?$/i.test(t);
+  }
+
+  function findClock(row, skip, depth) {
+    if (!row || !row.children || (depth || 0) > 3) return null;
+    for (var i = 0; i < row.children.length; i++) {
+      var c = row.children[i];
+      if (c === skip) continue;
+      if (looksLikeClock(c)) return c;
+      var inner = findClock(c, skip, (depth || 0) + 1);
+      if (inner) return inner;
+    }
+    return null;
+  }
+
+  function movePower() {
+    var btn = document.getElementById("sdrConnBtn");
+    var pick = document.getElementById("sdrPick");
+    if (!btn || !pick || !pick.parentNode) return false;
+
+    /* walk up from the receiver list until we find the row holding the clock */
+    var row = pick.parentNode, clock = null, guard = 0;
+    while (row && row !== document.body && guard++ < 6) {
+      clock = findClock(row, pick) || findClock(row, btn);
+      if (clock) break;
+      row = row.parentNode;
+    }
+    /* no clock found: the list's own row is still the right line */
+    if (!row || row === document.body || typeof row.insertBefore !== "function") {
+      row = pick.parentNode;
+      clock = null;
+    }
+    if (!row) return false;
+    if (btn.parentNode === row) return true;      /* already moved */
+
+    /* neutralise whatever the old toolbar positioning was */
+    btn.style.position = "static";
+    btn.style.float = "none";
+    btn.style.margin = "0 8px 0 0";
+    btn.style.verticalAlign = "middle";
+    btn.style.whiteSpace = "nowrap";
+    btn.style.flex = "0 0 auto";
+
+    if (clock && clock.parentNode === row) row.insertBefore(btn, clock.nextSibling);
+    else row.insertBefore(btn, pick);
+
+    return true;
+  }
+
+  function go() { if (!movePower()) setTimeout(movePower, 250); }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", go);
+  } else {
+    go();
+  }
+  window.addEventListener("load", movePower);
+  setTimeout(movePower, 400);
+  setTimeout(movePower, 1500);
 })();
