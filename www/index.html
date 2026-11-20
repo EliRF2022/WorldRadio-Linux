@@ -621,7 +621,7 @@
       <p class="ld-tag">Live radio, HF receivers, aviation and weather — worldwide.</p>
       <div style="display:flex;align-items:center;gap:10px">
         <button id="ldSettings" title="Settings · Backup &amp; Restore" style="border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:12px;padding:8px 12px;font-size:16px;cursor:pointer">⚙️</button>
-        <span id="ldBuild" class="ld-ver">v2.1255</span>
+        <span id="ldBuild" class="ld-ver">v2.1259</span>
       </div>
     </div>
 
@@ -1134,9 +1134,9 @@
 <div id="load"><div class="spinner"></div><span id="loadTxt">Loading stations…</span></div>
 <div id="hint" class="hint">drag to spin · pinch to zoom · tap a dot to listen</div>
 
-<script src="leaflet.js?v=2.1255"></script>
-<script src="three.min.js?v=2.1255"></script>
-<script src="satellite.min.js?v=2.1255"></script>
+<script src="leaflet.js?v=2.1259"></script>
+<script src="three.min.js?v=2.1259"></script>
+<script src="satellite.min.js?v=2.1259"></script>
 <script>
 /* =====================================================================
    Desktop bridge.
@@ -5692,7 +5692,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
 
 /* ---------- bottom navigation bar (handled by native Android) ---------- */
 </script>
-<script src="sdr_page.js?v=2.1255"></script>
+<script src="sdr_page.js?v=2.1259"></script>
 <script>
 /* fill the title-bar build tag from the version shown on the home page.
    Inline and display-neutral: it touches nothing the SDR page does. */
@@ -5703,6 +5703,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   /* ---------- TV / IPTV view ---------- */
   #tvView{flex-direction:column;background:#05070d;overflow:hidden;padding:0 0 22px;min-height:0}
   #tvView .tvv-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#0a0e14;z-index:5}
+  #tvView .tv-actions{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:#070b12;flex-wrap:wrap;z-index:4}
   #tvView .tvv-title{font-weight:700;font-size:14px;color:var(--txt)}
   #tvView .mini{width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--txt);font-size:14px;place-items:center;display:grid}
   #tvView .mini:active{transform:scale(.93)}
@@ -5869,7 +5870,9 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   <div class="tvv-head">
     <button class="mini" id="tvHome" title="Back">←</button>
     <span class="tvv-title">📺 TV / IPTV</span>
-    <button id="tvCountriesBtn" title="Browse channels by country" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(53,224,255,.5);background:rgba(53,224,255,.12);color:var(--cyan);padding:8px 12px;border-radius:9px;font-weight:700;font-size:12.5px">🌍&nbsp;Countries</button>
+  </div>
+  <div id="tvActions" class="tv-actions">
+    <button id="tvCountriesBtn" title="Browse channels by country" style="display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(53,224,255,.5);background:rgba(53,224,255,.12);color:var(--cyan);padding:8px 12px;border-radius:9px;font-weight:700;font-size:12.5px">🌍&nbsp;Countries</button>
 <button id="tvReload" title="Refresh the channel list" style="border:1px solid var(--line);background:var(--panel);color:var(--txt);padding:8px 12px;border-radius:9px;font-weight:700;font-size:12.5px">&#8635;</button>
 <button id="tvMenu" title="Open your favourites" style="display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(255,199,0,.5);background:rgba(255,199,0,.12);color:#ffc700;padding:8px 12px;border-radius:9px;font-weight:700;font-size:12.5px">★&nbsp;Favourites</button>
   </div>
@@ -5892,6 +5895,14 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
 </div>
 
 <div id="tvMenuList" class="tv-menu hide">
+  <div class="tv-menu-head"><b>★ Favourites</b>
+    <button class="mini" id="tvMenuClose" title="Close">✕</button></div>
+  <div class="tv-menu-sec">🎞 Playlist URLs</div>
+  <div id="tvMenuPlays"></div>
+  <div class="tv-menu-sec">🏷 Favourite Channels</div>
+  <div id="tvMenuCh"></div>
+</div>
+
 <div id="tvCountries" class="tv-menu hide">
   <div class="tv-menu-head"><b>🌍 Countries</b>
     <input id="tvCountrySearch" placeholder="Search country…" style="flex:1;max-width:190px;margin:0 10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--txt);padding:7px 9px;font-size:12px">
@@ -5900,13 +5911,6 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   <div id="tvCountryList"></div>
 </div>
 
-  <div class="tv-menu-head"><b>★ Favourites</b>
-    <button class="mini" id="tvMenuClose" title="Close">✕</button></div>
-  <div class="tv-menu-sec">🎞 Playlist URLs</div>
-  <div id="tvMenuPlays"></div>
-  <div class="tv-menu-sec">🏷 Favourite Channels</div>
-  <div id="tvMenuCh"></div>
-</div>
 
 <div id="tvPlayerWrap" class="hide">
   <div id="tvPlayerHead">
@@ -5917,7 +5921,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   <video id="tvVideo" controls playsinline webkit-playsinline></video>
 </div>
 
-<script src="hls.min.js?v=2.1255"></script>
+<script src="hls.min.js?v=2.1259"></script>
 <script>
 /* ================= TV / IPTV =================================================
    Self-contained. Sources: an Xtream player_api/get.php URL (with username &
@@ -6479,6 +6483,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   /* ================= WEBCAMS view ================= */
   #wcView{flex-direction:column;background:#05070d;overflow-y:auto;padding:0 0 14px}
   #wcView .wc-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#0a0e14;z-index:7;flex-wrap:wrap}
+#wcView .wc-actions{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--line);background:#0c111a;flex-wrap:wrap;z-index:6}
   #wcView .wc-title{font-weight:700;font-size:14px;color:var(--txt)}
   #wcView .mini{width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--txt);font-size:14px;display:grid;place-items:center}
   #wcView .mini:active{transform:scale(.93)}
@@ -6526,6 +6531,8 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
     <button class="mini" id="wcHome" title="Back">&#8592;</button>
     <span class="wc-title">&#128247; Webcams</span>
     <span id="wcCount" class="ph-sub"></span>
+  </div>
+  <div class="wc-actions">
     <button id="wcLive" class="mini wide" title="live video only">LIVE</button>
     <button id="wcMore" class="mini wide" title="load more cameras">+ Regions</button>
     <button id="wcWorldBtn" class="mini wide" title="worldwide cameras (needs a free Windy API key)">&#127757; Worldwide</button>
@@ -6620,7 +6627,32 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
     /* worldwide: Windy webcams (40k+ cams, 100+ countries). Needs a free API key -
        paste it on the Webcams page and this layer appears. */
     windy: {n:'\uD83C\uDF0D Worldwide', long:'Worldwide \u00b7 Windy webcams (free API key)', kind:'windy', url:''},
-  };
+  
+    usAK: {n:'US AK', long:'Alaska - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=AK'},
+    usAL: {n:'US AL', long:'Alabama - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=AL'},
+    usAR: {n:'US AR', long:'Arkansas - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=AR'},
+    usAZ: {n:'US AZ', long:'Arizona - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=AZ'},
+    usCA: {n:'US CA', long:'California - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=CA'},
+    usCO: {n:'US CO', long:'Colorado - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=CO'},
+    usFL: {n:'US FL', long:'Florida - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=FL'},
+    usGA: {n:'US GA', long:'Georgia - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=GA'},
+    usHI: {n:'US HI', long:'Hawaii - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=HI'},
+    usIA: {n:'US IA', long:'Iowa - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=IA'},
+    usID: {n:'US ID', long:'Idaho - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=ID'},
+    usIL: {n:'US IL', long:'Illinois - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=IL'},
+    usIN: {n:'US IN', long:'Indiana - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=IN'},
+    usKS: {n:'US KS', long:'Kansas - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=KS'},
+    usMA: {n:'US MA', long:'Massachusetts - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=MA'},
+    usMO: {n:'US MO', long:'Missouri - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=MO'},
+    usMS: {n:'US MS', long:'Mississippi - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=MS'},
+    usSC: {n:'US SC', long:'South Carolina - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=SC'},
+    usSD: {n:'US SD', long:'South Dakota - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=SD'},
+    usTX: {n:'US TX', long:'Texas - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=TX'},
+    usUT: {n:'US UT', long:'Utah - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=UT'},
+    usVT: {n:'US VT', long:'Vermont - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=VT'},
+    usWA: {n:'US WA', long:'Washington - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=WA'},
+    usWI: {n:'US WI', long:'Wisconsin - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=WI'},
+    usWY: {n:'US WY', long:'Wyoming - LiveTrafficCam', kind:'ltc', url:'https://livetrafficcam.com/api/cams.json?state=WY'},};
   var DEFAULT = ['tfl','d3','d4'];
   var MORE    = ['d7','d11','d8','d12','d5','d1','d6','d10','d2','d9'];
 
@@ -6774,6 +6806,21 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
       out.push({ src:key, name:pickName(a, i, img), place:place,
                  lat:+la.toFixed(4), lon:+lo.toFixed(4),
                  img:img.replace(/^http:/, 'https:'), hls:'', live:false });
+    }
+    return out;
+  }
+  /* ---- USA: LiveTrafficCam (free, no key, verified-live) ---- */
+  function parseLtc(text, key){
+    var j = JSON.parse(text), out = [], rows = (j && j.cams) || [];
+    for (var i = 0; i < rows.length; i++){
+      var c = rows[i] || {};
+      var la = parseFloat(c.lat), lo = parseFloat(c.lng);
+      if (!isFinite(la) || !isFinite(lo)) continue;
+      var img = String(c.image || '');
+      if (!img) continue;
+      img = /^https?:/i.test(img) ? img : ('https://livetrafficcam.com' + (img.charAt(0)==='/' ? img : '/' + img));
+      out.push({ src:key, name:(c.name || 'Camera'), place:(c.route || '') + ' ' + (c.state || ''),
+                 lat:la, lon:lo, img:img, hls:'', live:false });
     }
     return out;
   }
@@ -6931,6 +6978,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
       else if (kd === 'fi') rows = parseFi(txt, key);
       else if (kd === 'sg') rows = parseSg(txt, key);
       else if (kd === 'arc') rows = parseArc(txt, key);
+      else if (kd === 'ltc') rows = parseLtc(txt, key);
       else rows = [];
       absorbRows(rows, key);
       if (cb) cb();
@@ -7172,6 +7220,14 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
 
   /* -------- page entry point, called from setView('webcam') -------- */
   window.wcShow = function(){
+    var top = $('top'), head = document.querySelector('#wcView .wc-head');
+    /* push the webcam header (and its action row right after it) below the app
+       top bar - without this it can tuck the corner buttons under that bar */
+    if (top && head) head.style.marginTop = (Math.round(top.getBoundingClientRect().height) + 6) + 'px';
+    var acts = document.querySelector('#wcView .wc-actions');
+    if (acts) acts.style.marginTop = '8px';   /* give the action row its own breathing room */
+    
+
     var top = $('top'), head = document.querySelector('#wcView .wc-head');
     if (top && head) head.style.paddingTop = (Math.round(top.getBoundingClientRect().height) + 6) + 'px';
     initMap();
