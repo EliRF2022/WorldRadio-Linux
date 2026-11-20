@@ -2733,6 +2733,12 @@
       ".sdr-live{display:flex;flex-direction:column;gap:3px;margin:5px 0 0;padding:4px 8px;" +
       "background:#101722;border:1px solid #2a2f3a;border-radius:10px}" +
       ".sdr-live .lv{display:flex;align-items:center;gap:7px;min-height:22px}" +
+      /* squelch on its own line, volume below it - each slider spans the full width of the page */
+      ".sdr-live{display:flex!important;flex-direction:column!important;gap:7px!important}" +
+      ".sdr-live .lv{flex:0 0 auto!important;width:100%!important}" +
+      ".sdr-live .lv label{flex:0 0 auto!important;min-width:62px!important}" +
+      ".sdr-live .lv input[type=range]{flex:1 1 auto!important;width:100%!important;min-width:0!important;display:block!important}" +
+      ".sdr-live .lv b{flex:0 0 auto!important;min-width:34px!important;text-align:right!important}" +
       ".sdr-live label{flex:0 0 auto;width:52px;font-size:10.5px;font-weight:700;color:#8a94a6;" +
       "text-transform:uppercase;letter-spacing:.6px}" +
       ".sdr-live input[type=range]{flex:1 1 auto;min-width:0;height:20px;accent-color:#00e5ff}" +
@@ -3835,6 +3841,9 @@ function drawSmeter() {
     if (fos) fos.onclick = function (ev) { ev.stopPropagation(); favOpen(); };
     el("sdrScanGrp").onclick = function (ev) { ev.stopPropagation(); grpSheetOpen("scan"); };
     scanModeLoad(); scanModeLabel(); scanStop();
+    /* the scanner row now exists: put the squelch + volume rows directly under it */
+    try { sdrLiveAlways(); } catch (e) {}
+    try { snapUnderScan(); } catch (e) {}
   }
   /* ================= readable receiver picker =================
      The native <select> clipped its text on the phone (OS text scaling) and is unusable with
@@ -3961,7 +3970,7 @@ function drawSmeter() {
   function pickerTick() { try { fixMenuSheet(); } catch (e) {}
     try { drawSqlMark(); } catch (e) {}
     try { paintDrawError(); } catch (e) {}
-    try { buildPickSheet(); buildScanPanel(); buildLiveSliders(); syncLiveSliders(); syncPickBtn();   buildScanSettings(); scanModeLabel();
+    try { buildPickSheet(); buildScanPanel(); syncLiveSliders(); syncPickBtn();   buildScanSettings(); scanModeLabel();
     buildGrpSheet(); buildGrpSettings(); scanGrpLabel();
     var lb = el("sdrFavList");
     if (lb && !lb.classList.contains("hide")) {
@@ -4274,12 +4283,87 @@ function drawSmeter() {
      Both lived inside the hamburger sheet, which covers the waterfall while it is open - useless for
      something you adjust WHILE listening. They are mirrored here under the scanner row and bound to
      the same elements, so either control moves both and the squelch line follows instantly. */
+  /* ---- squelch + volume: one per line, each slider spanning the full width ---- */
+  function sdrLiveCss() {
+    var s = document.getElementById("sdrLiveCss");
+    if (!s) {
+      s = document.createElement("style");
+      s.id = "sdrLiveCss";
+      (document.head || document.documentElement).appendChild(s);
+    }
+    s.textContent =
+      /* whichever script moves a control row out of the menu onto the front page, that row
+         becomes a direct child of #sdrView - so these rules keep it tidy: one control per
+         line, the slider spanning the screen. */
+      "#sdrView > .sdr-row{display:flex!important;align-items:center!important;gap:8px!important;" +
+        "width:100%!important;flex:0 0 auto!important;min-height:24px!important;margin:5px 0!important}" +
+      "#sdrView > .sdr-row label{flex:0 0 auto!important;min-width:64px!important;font-size:12px!important}" +
+      "#sdrView > .sdr-row input[type=range]{flex:1 1 auto!important;width:auto!important;min-width:0!important;" +
+        "max-width:none!important;display:block!important}" +
+      "#sdrView > .sdr-row select{flex:1 1 auto!important;min-width:0!important}";
+    (document.head || document.documentElement).appendChild(s);
+  }
+  window.sdrLiveCss = sdrLiveCss;
+  sdrLiveCss();
+
+  /* ---- the squelch + volume pair lives on the PAGE, not buried in the sheet ----
+     Built at load so it is there before you connect, and the duplicate rows inside the
+     hamburger sheet are hidden (they still hold the values the receiver is sent). */
+  /* keep the squelch + volume pair immediately below the scanner row on the front page */
+  function snapUnderScan() {
+    var scan = el("sdrScan"), live = el("sdrLive");
+    if (!scan || !live || !scan.parentNode) return;
+    if (live.previousElementSibling === scan) return;      /* already in place */
+    scan.parentNode.insertBefore(live, scan.nextSibling);
+  }
+  window.snapUnderScan = snapUnderScan;
+  /* Bring the real Squelch row out of the hamburger menu onto the front page, directly under
+     the scanner row. The volume is placed below it by the script appended at the end of this file.
+     The rows are the SAME nodes the receiver is driven from, so nothing else changes. */
+  /* the .sdr-row an element sits in, wherever that row currently lives */
+  function sdrRowOf(node) {
+    var n = node, g = 0;
+    while (n && n !== document.body && g++ < 6) {
+      if (n.classList && n.classList.contains("sdr-row")) return n;
+      n = n.parentNode;
+    }
+    return null;
+  }
+  function sdrLiveAlways() {
+    try { sdrLiveCss(); } catch (e) {}
+    var host = el("sdrView");
+    if (!host) return;
+    var sqRow = sdrRowOf(el("sdrSquelch"));
+    var volRow = sdrRowOf(el("sdrVol"));
+    if (!sqRow && !volRow) return;
+    if (sqRow) { sqRow.id = sqRow.id || "sdrSqRow"; sqRow.style.display = ""; }
+    if (volRow) { volRow.id = volRow.id || "sdrVolRow"; volRow.style.display = ""; }
+    /* both live at the very BOTTOM of the page, below the scanner block:
+       squelch first, volume straight under it */
+    var last = host.lastElementChild;
+    if (sqRow && (sqRow.parentNode !== host || sqRow.nextElementSibling !== volRow)) {
+      host.appendChild(sqRow);
+      if (volRow) host.appendChild(volRow);
+    } else if (volRow && volRow.parentNode !== host) {
+      host.appendChild(volRow);
+    }
+    /* make sure the pair really is the tail of the page */
+    if (volRow && volRow !== host.lastElementChild) { host.appendChild(sqRow); host.appendChild(volRow); }
+    else if (sqRow && sqRow.nextElementSibling !== volRow) { host.appendChild(volRow); }
+  }
+  window.sdrLiveAlways = sdrLiveAlways;
+
+  sdrLiveAlways();
+  window.addEventListener("load", sdrLiveAlways);
+  setTimeout(sdrLiveAlways, 500);
+  setTimeout(sdrLiveAlways, 2000);
   function buildLiveSliders() {
     var host = el("sdrScan") ? el("sdrScan").parentNode : el("sdrView");
     if (!host || el("sdrLive")) return;
     var box = document.createElement("div");
     box.id = "sdrLive";
     box.className = "sdr-live";
+    try { sdrLiveCss(); } catch (e) {}
     box.innerHTML =
       '<div class="lv"><label for="sdrSqlLite">Squelch</label>' +
       '<input id="sdrSqlLite" type="range" step="1"><b id="sdrSqlLiteVal">-150</b></div>' +
@@ -4456,4 +4540,115 @@ function drawSmeter() {
   window.addEventListener("load", movePower);
   setTimeout(movePower, 400);
   setTimeout(movePower, 1500);
+})();
+/* ---- VOLUME PLACEMENT (added verbatim at the owner's request) ---- */
+
+/* =====================================================================
+   VOLUME PLACEMENT — put the volume slider directly below the squelch
+   control on the front page (the S-meter / Scanner / Favs area).
+   Self-contained: appended after the main script, nothing inside it edited.
+   Moves the existing #sdrVol node, so its value and handlers are kept.
+   ===================================================================== */
+(function () {
+  "use strict";
+
+  function byId(id) { return document.getElementById(id); }
+
+  /* nearest ancestor that behaves like a control row */
+  function rowOf(node) {
+    if (!node) return null;
+    var n = node.parentNode, guard = 0;
+    while (n && n !== document.body && guard++ < 6) {
+      if (n.tagName === "DIV") {
+        var cls = typeof n.className === "string" ? n.className : "";
+        if (/\brow\b/i.test(cls)) return n;
+        if (n.querySelector("label") && n.querySelector("input,select,button")) return n;
+      }
+      n = n.parentNode;
+    }
+    return node.parentNode;
+  }
+
+  /* how many controls does this row hold besides the volume one? */
+  function otherControls(row, vol) {
+    if (!row) return 0;
+    var all = row.querySelectorAll("input,select,button"), c = 0;
+    for (var i = 0; i < all.length; i++) if (all[i] !== vol) c++;
+    return c;
+  }
+
+  function findByText(txt) {
+    var b = document.querySelectorAll("button");
+    for (var i = 0; i < b.length; i++)
+      if ((b[i].textContent || "").trim().toLowerCase().indexOf(txt) >= 0) return b[i];
+    return null;
+  }
+
+  function isPlaced() {
+    var sq = byId("sdrSquelch"), vol = byId("sdrVol");
+    if (!sq || !vol) return false;
+    var sqRow = rowOf(sq), volRow = rowOf(vol);
+    return !!(sqRow && volRow && volRow.previousElementSibling === sqRow);
+  }
+
+  function placeVolume() {
+    if (isPlaced()) return true;
+    var vol = byId("sdrVol");
+    if (!vol) return false;
+
+    var sqRow = rowOf(byId("sdrSquelch"));
+    var volRow = rowOf(vol);
+
+    /* anchor: squelch first, then the Scanner / Favs row, then the S-meter */
+    var target = sqRow;
+    if (!target) {
+      target = rowOf(findByText("scan") || byId("sdrFavOpen") || byId("sdrFavBtn"));
+    }
+    if (!target) {
+      var m = byId("sdrSmeter") || byId("sdrS");
+      target = m ? (rowOf(m) || m.parentNode) : null;
+    }
+    if (!target || !target.parentNode) return false;
+
+    /* move the whole row when it only holds the slider; otherwise build a
+       fresh row so no unrelated controls are dragged out of the menu */
+    var moveWhole = volRow && volRow !== target && otherControls(volRow, vol) === 0;
+
+    if (moveWhole) {
+      if (volRow.parentNode) volRow.parentNode.removeChild(volRow);
+      target.parentNode.insertBefore(volRow, target.nextSibling);
+    } else {
+      var nr = document.createElement("div");
+      nr.className = (volRow && volRow.className) || "sdr-row";
+      nr.id = "sdrVolRow";
+      var lab = volRow ? volRow.querySelector("label") : null;
+      if (lab) nr.appendChild(lab.cloneNode(true));
+      nr.appendChild(vol);                    /* moving the node keeps its handlers */
+      target.parentNode.insertBefore(nr, target.nextSibling);
+    }
+
+    vol.style.display = "";
+    vol.style.visibility = "visible";
+    return true;
+  }
+
+  function go() { placeVolume(); }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", go);
+  else go();
+  window.addEventListener("load", go);
+  setTimeout(go, 300);
+  setTimeout(go, 1200);
+  setTimeout(go, 2500);
+
+  /* the menu sheet and panels are injected at runtime, so watch for them */
+  if (window.MutationObserver) {
+    var pending = false;
+    var mo = new MutationObserver(function () {
+      if (pending || isPlaced() || !byId("sdrVol")) return;
+      pending = true;
+      setTimeout(function () { pending = false; placeVolume(); }, 60);
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+  }
 })();

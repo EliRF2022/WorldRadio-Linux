@@ -619,7 +619,10 @@
     <div class="ld-brand">
       <h1 class="ld-title"><span class="ld-gl">🌍</span>World<span>Radio</span></h1>
       <p class="ld-tag">Live radio, HF receivers, aviation and weather — worldwide.</p>
-      <span id="ldBuild" class="ld-ver">v2.1242</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button id="ldSettings" title="Settings · Backup &amp; Restore" style="border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:12px;padding:8px 12px;font-size:16px;cursor:pointer">⚙️</button>
+        <span id="ldBuild" class="ld-ver">v2.1255</span>
+      </div>
     </div>
 
     <div class="ld-stats">
@@ -665,6 +668,7 @@
 
     <button class="ld-card wide" id="ldWebcams"><span class="ld-ico">&#128247;</span><div><b>Webcams</b><i>Live traffic &amp; city cameras — California, London</i></div></button>
 <button class="ld-card wide" id="ldTvCard"><span class="ld-ico">📺</span><div><b>TV / IPTV</b><i>Watch your streams</i></div></button>
+    
     <p class="ld-foot">Tap a card to begin · map, weather and radio lists work offline</p>
     <p class="ld-credit">Created by <b>Eric · KA3KDL</b> <span>(EliRF2022)</span></p>
   </div>
@@ -1130,9 +1134,9 @@
 <div id="load"><div class="spinner"></div><span id="loadTxt">Loading stations…</span></div>
 <div id="hint" class="hint">drag to spin · pinch to zoom · tap a dot to listen</div>
 
-<script src="leaflet.js?v=2.1242"></script>
-<script src="three.min.js?v=2.1242"></script>
-<script src="satellite.min.js?v=2.1242"></script>
+<script src="leaflet.js?v=2.1255"></script>
+<script src="three.min.js?v=2.1255"></script>
+<script src="satellite.min.js?v=2.1255"></script>
 <script>
 /* =====================================================================
    Desktop bridge.
@@ -4633,6 +4637,14 @@ function closeFilters(){
 $('chipFilters').onclick = () => {
   $('filtSheet').classList.contains('hide') ? openFilters() : closeFilters();
 };
+/* the home screen ⚙ button opens the same Settings/Filters sheet */
+(function () {
+  var s = document.getElementById('ldSettings');
+  if (s) s.onclick = function () {
+    if (typeof closeFilters === 'function') closeFilters();
+    if (typeof openFilters === 'function') openFilters();
+  };
+})();
 $('fsClose').onclick   = closeFilters;
 $('fsDone').onclick    = closeFilters;
 $('filtScrim').onclick = closeFilters;
@@ -5571,31 +5583,70 @@ requestSatellites();
 requestAtc();          // frequencies, so the airport panel is instant
 requestOnlineCoverage();   // which airports SkyListening actually has
 
-const BK_KEYS = ['wr_favs','wr_units','wr_hide_offline','wr_sdr_cov','wr_offline_urls','wr_my_sdrs'];
+const BK_KEYS = ["sdr_freq","sdr_good","sdr_mode","sdr_off","sdr_pick","sdr_scan_mode","sdr_scan_secs",
+  "sdr_step","sdr_wfmax","sdr_wfmin","sdr_zoom","sdr_favs","wr_favs","wr_hide_offline","wr_my_sdrs",
+  "wr_offline_urls","wr_sdr_cov","wr_showMap","wr_showRadio","wr_showSat","wr_showSdr",
+  "wr_tv_cache_v1","wr_tv_chfavs","wr_tv_countries","wr_tv_favs","wr_tv_src","wr_units",
+  "wr_windy_cache_v1","wr_windy_key"];
+/* Collect every stored setting we own. Values are stored raw (strings) so a
+   restore is byte-for-byte identical, whatever the type the app expected. */
+function bkCollectAll(){
+  var data = {};
+  var keys = [], i, s;
+  try { s = localStorage; for (i=0;i<s.length;i++){ var k=s.key(i); if (k && /^(wr_|sdr_)/.test(k) && keys.indexOf(k)<0) keys.push(k); } } catch(e){}
+  BK_KEYS.forEach(function(k){ if (keys.indexOf(k)<0) keys.push(k); });
+  keys.forEach(function(k){ try{ var v=localStorage.getItem(k); if (v!==null) data[k]=v; }catch(e){} });
+  var pill=document.querySelector('.ld-ver'); var ver=pill?pill.textContent.replace(/\s+/g,"").trim():"";
+  return JSON.stringify({app:"WorldRadio",ver:ver,date:new Date().toISOString(),data:data}, null, 1);
+}
+/* Does a picked file contain the app backup (either format)? */
+function bkApply(txt){
+  var o; try{ o=JSON.parse(txt); }catch(e){ toast('Invalid backup file'); return; }
+  var data = (o && o.data && typeof o.data==="object") ? o.data : (o && o.keys ? o.keys : null);
+  if (!data || typeof data!=="object" || !Object.keys(data).length){ toast('Invalid backup file'); return; }
+  var n=0;
+  /* drop keys we own that aren't in the backup, then write every stored value */
+  var have=Object.keys(data);
+  [].concat(BK_KEYS).forEach(function(k){ try{ if (have.indexOf(k)<0) localStorage.removeItem(k); }catch(e){} });
+  Object.keys(data).forEach(function(k){ try{
+    var v=data[k];
+    localStorage.setItem(k, typeof v==="string" ? v : JSON.stringify(v)); n++;
+  }catch(e){} });
+  toast('Restored '+n+' items'); setTimeout(function(){ try{ location.reload(); }catch(e){} }, 700);
+}
 function exportBackup(){
-  const data = {v:1, ts: new Date().toISOString(), keys:{}};
-  BK_KEYS.forEach(k => { try { if (localStorage[k]) data.keys[k] = JSON.parse(localStorage[k]); } catch(e){} });
-  const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = 'worldradio-backup-'+Date.now()+'.json'; a.click();
-  URL.revokeObjectURL(url);
-  toast('Backup exported');
+  var json = bkCollectAll();
+  var androidShell = (function(){ try{ return typeof window.Bridge==="object" && typeof window.Bridge.saveFile==="function"; }catch(e){ return false; } })();
+  if (androidShell){ try{ window.Bridge.saveFile("WorldRadio-backup-"+new Date().toISOString().slice(0,10)+".json", json); return; }catch(e){} }
+  /* file System Access API -> real "Save As" with a location picker */
+  if (window.showSaveFilePicker){
+    window.showSaveFilePicker({suggestedName:"WorldRadio-backup-"+new Date().toISOString().slice(0,10)+".json",
+      types:[{description:"JSON backup",accept:{"application/json":[".json"]}}]})
+      .then(function(f){ return f.createWritable().then(function(w){ return w.write(json).then(function(){ return w.close(); }); }); })
+      .then(function(){ toast('Backup saved'); })
+      .catch(function(e){ if(!(e&&e.name==="AbortError")) toast('Save cancelled or failed'); });
+    return;
+  }
+  var blob=new Blob([json],{type:'application/json'}), url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download='worldradio-backup-'+Date.now()+'.json'; a.click();
+  URL.revokeObjectURL(url); toast('Backup exported');
 }
 function importBackup(e){
-  const file = e.target.files[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(ev){ try {
-    const data = JSON.parse(ev.target.result);
-    if (!data.keys) throw new Error('Invalid backup');
-    let count = 0;
-    Object.keys(data.keys).forEach(k => { if (BK_KEYS.includes(k)) { localStorage[k] = JSON.stringify(data.keys[k]); count++; } });
-    toast('Restored ' + count + ' items'); location.reload();
-  } catch(err){ toast('Invalid backup file'); } };
+  var file = e.target.files && e.target.files[0]; if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(ev){ bkApply(String(ev.target.result||"")); };
   reader.readAsText(file);
 }
+function bkOpenPicker(){
+  var androidShell = (function(){ try{ return typeof window.Bridge==="object" && typeof window.Bridge.loadFile==="function"; }catch(e){ return false; } })();
+  if (androidShell){ try{ window.Bridge.loadFile("onBackupLoad"); return; }catch(e){} }
+  $('bkFile').click();
+}
+window.onBackupLoad = function(txt){ bkApply(txt); };
 $('bkExport').onclick = exportBackup;
-$('bkImport').onclick = () => $('bkFile').click();
+$('bkImport').onclick = bkOpenPicker;
 $('bkFile').onchange = importBackup;
+
 /* --------------------------------------------------------------- clear cache --
    Clears only what can be downloaded again. NOT a reset: favourites, saved
    receivers, units, layer toggles and the SDR page settings (sdr_freq /
@@ -5641,7 +5692,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
 
 /* ---------- bottom navigation bar (handled by native Android) ---------- */
 </script>
-<script src="sdr_page.js?v=2.1242"></script>
+<script src="sdr_page.js?v=2.1255"></script>
 <script>
 /* fill the title-bar build tag from the version shown on the home page.
    Inline and display-neutral: it touches nothing the SDR page does. */
@@ -5659,9 +5710,9 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   #tvSrc{flex:1 1 240px;min-width:200px;background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--txt);padding:9px 10px;font-size:12.5px}
   #tvLoad{border:1px solid rgba(53,224,255,.5);background:rgba(53,224,255,.12);color:var(--cyan);padding:9px 14px;border-radius:9px;font-weight:700;font-size:12px}
   #tvMsg{width:100%;font-size:11px;color:var(--amber);min-height:0;word-break:break-all}
-  #tvCats{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;scrollbar-width:none}
+  #tvCats{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;scrollbar-width:none;flex-wrap:wrap;max-height:110px;overflow-y:auto}
   #tvCats::-webkit-scrollbar{display:none}
-  #tvCats button{flex:0 0 auto;border:1px solid var(--line);background:var(--panel);color:var(--dim);border-radius:12px;padding:7px 11px;font-size:11.5px;font-weight:650}
+  #tvCats button{flex:0 0 auto;border:1px solid var(--line);background:var(--panel);color:var(--dim);border-radius:12px;padding:7px 11px;font-size:11.5px;font-weight:650;white-space:nowrap}
   #tvCats button.on{background:rgba(53,224,255,.14);color:var(--cyan);border-color:rgba(53,224,255,.4)}
   #tvFavs{display:flex;gap:6px;overflow-x:auto;padding:2px 12px 10px;scrollbar-width:none;flex-wrap:nowrap}
   #tvFavs::-webkit-scrollbar{display:none}
@@ -5849,7 +5900,8 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   <div id="tvCountryList"></div>
 </div>
 
-  <div class="tv-menu-head"><b>★ Favourites</b><button class="mini" id="tvMenuClose" title="Close">✕</button></div>
+  <div class="tv-menu-head"><b>★ Favourites</b>
+    <button class="mini" id="tvMenuClose" title="Close">✕</button></div>
   <div class="tv-menu-sec">🎞 Playlist URLs</div>
   <div id="tvMenuPlays"></div>
   <div class="tv-menu-sec">🏷 Favourite Channels</div>
@@ -5865,7 +5917,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   <video id="tvVideo" controls playsinline webkit-playsinline></video>
 </div>
 
-<script src="hls.min.js?v=2.1242"></script>
+<script src="hls.min.js?v=2.1255"></script>
 <script>
 /* ================= TV / IPTV =================================================
    Self-contained. Sources: an Xtream player_api/get.php URL (with username &
@@ -5960,20 +6012,22 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   }
   function parseM3U(text){
     channels = [];
-    var name=null, icon='', dur=0;
+    var name=null, icon='', dur=0, grp='';
     text.split(/\r?\n/).forEach(function(line){
       line = line.trim();
       if (/^#EXTINF/i.test(line)){
+        var gt = /group-title="([^"]*)"/i.exec(line);
         var im = /tvg-logo="([^"]*)"/i.exec(line);
         icon = im ? im[1] : '';
+        if (gt && gt[1]) grp = gt[1].trim(); else grp = '';
         var nm = line.replace(/^#EXTINF:?[^,]*,?/, '').trim();
         if (!nm) nm = line;
         name = nm;
       } else if (/^#EXTGRP:/i.test(line)){
-        // group/category
+        grp = line.replace(/^#EXTGRP:\s*/i, '').trim();
       } else if (line && !/^#/.test(line)){
         if (name){
-          channels.push({ name:name, id:channels.length, icon:icon, cat:'Playlist', url:line });
+          channels.push({ name:name, id:channels.length, icon:icon, cat:(grp || 'Playlist'), url:line });
           name=null; icon='';
         }
       }
@@ -7227,5 +7281,13 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   sync(typeof viewMode !== 'undefined' ? viewMode : 'home');
 })();
 </script>
+
+
+
+
+</div>
+
+
+</div>
+
 </body>
-</html>
