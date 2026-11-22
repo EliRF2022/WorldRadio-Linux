@@ -1195,8 +1195,11 @@
     if (!isFinite(hz) || hz < 1000 || hz > 6000000000) return;
     S.freq = Math.round(hz);
     /* the display window follows the finger instantly: the band data is already here,
-       so scrolling inside it costs nothing and never waits for the radio. */
-    if (fromUser) { S.visCenter = S.freq; S.userTuneAt = Date.now(); }
+       so scrolling inside it costs nothing and never waits for the radio. This must
+       update on EVERY move - gate the radio message, not the display, or the picture
+       only advances at the throttle rate and feels laggy/jumpy. */
+    if (fromUser) { S.userTuneAt = Date.now(); }
+    S.visCenter = S.freq;      /* always track the dial, even off-throttle moves */
     drawFreq();
     drawScale();
     try { updateBandLabel(); } catch (e) {}
@@ -3422,6 +3425,12 @@
      receiver round-trips. This is what makes the waterfall track the finger. */
   function blitWaterfall() {
     if (!S.wctx || !S.hist || !S.water) return;
+    /* Smooth (bilinear) upsampling: at deep zoom the visible window is only a few
+       hundred bins stretched across the screen - nearest-neighbour scaling makes
+       that a blocky staircase. Canvas reports sctx smoothing via
+       imageSmoothingEnabled; enable it so the crop scales smoothly and the
+       waterfall keeps sharp edges even when zoomed into a narrow slice. */
+    try { S.wctx.imageSmoothingEnabled = true; S.wctx.imageSmoothingQuality = "high"; } catch (e) {}
     var bins = S.hist.width, W = S.water.width, H = S.water.height;
     var spanHz = visSpan() || (S.bw || 1) || 1;
     var c = visCenterHz() || (S.center || 0);
