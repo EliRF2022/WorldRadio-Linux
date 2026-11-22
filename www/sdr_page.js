@@ -1241,12 +1241,28 @@
        nothing but noise. A receiver whose profile happens to hold offset 0 works
        fine, which is why this only bites on some servers. The app always
        re-centres on tune, so the demod belongs at 0. */
+    /* digital modes are secondary: we keep the underlying analog modulator and
+       ask the receiver to run the digital decoder on top of it (same as its own
+       client does via secondary_mod). */
+    var dm = S.allModes && S.allModes[S.mode];
+    var isDigi = dm && dm.type === "digimode";
+    var primary;
+    if (isDigi) {
+      var under = dm.under;
+      primary = under && under !== "empty" ? under : (under === "empty" ? "am" : "usb");
+      if (!primary) primary = "usb";
+    } else {
+      primary = S.mode;
+    }
     /* where the demodulator sits inside the band - our own private position */
-    var p = { mod: S.mode, offset_freq: Math.round(S.freq - (S.center || S.freq)) };
-    if (RDS_MODES[S.mode]) p.secondary_mod = "rds";   /* ask for the station text stream */
-    var bpk = bpKey(S.mode);
-    if (bpk) { p.low_cut = S.modeBp[bpk].low_cut; p.high_cut = S.modeBp[bpk].high_cut; }
-    else { var bd = bpFor(S.mode); if (bd) { p.low_cut = bd.lo; p.high_cut = bd.hi; } }
+    var p = { mod: primary, offset_freq: Math.round(S.freq - (S.center || S.freq)) };
+    if (isDigi) p.secondary_mod = S.mode;             /* run the digital decoder */
+    else if (RDS_MODES[S.mode]) p.secondary_mod = "rds";  /* station text stream */
+    else if (S.mode !== primary) p.secondary_mod = "";    /* clear a stale decoder */
+    var bpk = bpKey(isDigi ? primary : S.mode);
+    var bpsrc = isDigi ? primary : S.mode;
+    if (bpk && S.modeBp[bpk]) { p.low_cut = S.modeBp[bpk].low_cut; p.high_cut = S.modeBp[bpk].high_cut; }
+    else if (!bpk || !S.modeBp[bpk]) { var bd = bpFor(bpsrc); if (bd) { p.low_cut = bd.lo; p.high_cut = bd.hi; } }
     return p;
   }
 
@@ -1256,11 +1272,21 @@
        (selected option text) and look active, so you can see what you picked;
        back on a primary mode it falls back to the "more\u2026" placeholder. */
     var sel = el("sdrModeMore");
-    if (!sel || !sel.options) return;
-    var inList = false;
-    for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === S.mode) inList = true;
-    sel.value = inList ? S.mode : "";
-    if (inList) sel.classList.add("on"); else sel.classList.remove("on");
+    if (sel && sel.options) {
+      var inList = false;
+      for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === S.mode) inList = true;
+      sel.value = inList ? S.mode : "";
+      if (inList) sel.classList.add("on"); else sel.classList.remove("on");
+    }
+    /* the DIG dropdown: show the active digimode (and look active), otherwise
+       fall back to the DIG placeholder */
+    var dig = el("sdrDIG");
+    if (dig && dig.options) {
+      var inDig = false;
+      for (var i = 0; i < dig.options.length; i++) if (dig.options[i].value === S.mode) inDig = true;
+      dig.value = inDig ? S.mode : "";
+      if (inDig) dig.classList.add("on"); else dig.classList.remove("on");
+    }
   }
 
 
@@ -1288,22 +1314,33 @@
     var norm = [];
     (Array.isArray(list) ? list : []).forEach(function (x) {
       if (typeof x === "string") {
-        norm.push({ id: x.toLowerCase(), name: x.toUpperCase(), bp: null });
+        norm.push({ id: x.toLowerCase(), name: x.toUpperCase(), bp: null, type: "analog", under: null });
       } else if (x && (x.modulation || x.mod)) {
-        /* only the plain analog modes drive cleanly from here; the digital
-           ones need a secondary demodulator and are left off for now */
-        if (x.type && x.type !== "analog") return;
+        /* keep every mode - analog ones drive as the primary demodulator,
+           digital ones are sent as secondary_mod on their underlying analog */
         var id = String(x.modulation || x.mod).toLowerCase();
-        norm.push({ id: id, name: String(x.name || id).toUpperCase(), bp: x.bandpass || null });
+        /* The server's own type decides the driving model, exactly like its own
+           client: type "analog" -> sent as the primary modulator (this includes
+           the digital-VOICE modes dmr/dstar/ysf/nxdn/p25/m17/freedv, which the
+           server reports as analog because the demodulator itself is analog),
+           type "digimode" -> sent as secondary_mod on an underlying analog. */
+        var type = x.type || "analog";
+        var under = (Array.isArray(x.underlying) && x.underlying.length) ? x.underlying[0] : null;
+        norm.push({ id: id, name: String(x.name || id).toUpperCase(), bp: x.bandpass || null, type: type, under: under, req: x.requirements || [] });
       }
     });
-    if (!norm.length) norm = FALLBACK_MODES.map(function (p) { return { id: p[1], name: p[0], bp: null }; });
+    if (!norm.length) norm = FALLBACK_MODES.map(function (p) { return { id: p[1], name: p[0], bp: null, type: "analog", under: null }; });
 
     S.modeBp = {};
     norm.forEach(function (m) { if (m.bp) S.modeBp[m.id] = m.bp; });
+    S.allModes = {};                                   /* mode id -> {name,type,under} */
+    norm.forEach(function (m) { S.allModes[m.id] = { name: m.name, type: m.type, under: m.under }; });
 
-    var prim = [], more = [];
-    norm.forEach(function (m) { (PRIMARY_MODES.indexOf(m.id) >= 0 ? prim : more).push(m); });
+    var prim = [], more = [], digi = [];
+    norm.forEach(function (m) {
+      if (m.type === "digimode") digi.push(m);
+      else (PRIMARY_MODES.indexOf(m.id) >= 0 ? prim : more).push(m);
+    });
     function ord(m) {                     /* \"|| 9\" would turn AM's 0 into 9 */
       var v = PRIMARY_ORDER[m.id];
       return v === undefined ? 9 : v;
@@ -1325,6 +1362,14 @@
                     ">" + m.name + "</option>";
            }).join("") + "</select>";
     }
+    if (digi.length) {
+      h += '<select id="sdrDIG" class="sdr-more dig" title="digital decoders">' +
+           '<option value="">DIG\u2026</option>' +
+           digi.map(function (m) {
+             return '<option value="' + m.id + '"' + (m.id === S.mode ? " selected" : "") +
+                    ">" + m.name + "</option>";
+           }).join("") + "</select>";
+    }
     try { dbg("modes -> buttons: " + prim.map(function (m) { return m.id; }).join(",") +
               " | dropdown: " + more.map(function (m) { return m.id; }).join(",")); } catch (e) {}
     box.innerHTML = h;
@@ -1340,6 +1385,12 @@
            state, so a mode picked from here stays visible (and highlighted) until
            a primary mode is chosen instead. Resetting it was why the control
            always read "more…" no matter what you selected. */
+        if (this.value) setMode(this.value, true);
+      };
+    }
+    var dig = box.querySelector(".sdr-more.dig");
+    if (dig) {
+      dig.onchange = function () {
         if (this.value) setMode(this.value, true);
       };
     }
