@@ -3038,23 +3038,47 @@
      tuned dead-on; move your dial until the decode line is centred (for CW the
      tone blip sits centred; for FT8/SSTV/PSK the passband's wanted peak lands
      centre). Kept tiny so it never steals layout from the main display. */
+  function secWidth() {
+    /* The canvases must match the width they are actually RENDERED at. When the
+       strip is hidden (class "hide") offsetWidth reads 0 - sizing 300px then,
+       and CSS stretching that 300px canvas up to the panel's real width is why
+       the tune graph only showed a fraction of it. Always measure against the
+       strip's own box while it is visible, and refresh when it becomes visible. */
+    var box = el("sdrSec");
+    var w = 0;
+    if (box) {
+      var r = box.getBoundingClientRect();
+      w = Math.round(r.width);
+      if (!w) w = box.offsetWidth;
+      if (!w) w = box.clientWidth;
+    }
+    if (w < 80) w = (document.body && document.body.offsetWidth) || 360;
+    return w - 20;                       /* leave a little padding inside the card */
+  }
   function secInit() {
-    if (S.sec) return true;
     var sp = el("sdrSecSpec"), w = el("sdrSecWater");
     if (!sp || !w) return false;
-    if (!sp.width) { sp.width = sp.offsetWidth || 300; sp.height = 34; }
-    if (!w.width) { w.width = w.offsetWidth || 300; w.height = 40; }
+    var W = secWidth();
+    if (S.sec) {
+      if (sp.width === W) return true;
+      /* re-size: keep the row buffer aligned to the new width */
+      sp.width = W; sp.height = 34; w.width = W; w.height = 40;
+      S.sec.W = W; S.sec.sctx = sp.getContext("2d"); S.sec.wctx = w.getContext("2d");
+      S.sec.rows = [];
+      S.sec.dSctx = 0;
+      return true;
+    }
+    sp.width = W; sp.height = 34; w.width = W; w.height = 40;
     S.sec = { sctx: sp.getContext("2d"), wctx: w.getContext("2d"),
-              W: sp.width, HS: sp.height, HW: w.height,
+              W: W, HS: 34, HW: 40,
               rows: [], dBmin: -120, dBmax: -30, last: null };
-    sp.dataset.wired = "1";
     return true;
   }
   function secShow(show) {
     var box = el("sdrSec");
     if (!box) return false;
     box.classList.toggle("hide", !show);
-    if (show && !S.sec) secInit();
+    if (show) { secInit(); }             /* size to the real panel width (not 0) */
     return true;
   }
   function secPush(f) {
