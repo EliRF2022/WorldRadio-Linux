@@ -1217,7 +1217,15 @@
            the DISPLAY immediately (S.center = S.freq) so there is no gap while
            the receiver confirms. */
         S.expectCenter = S.freq;
-        if (S.center) S.center = S.freq;      /* picture centres on the dial now */
+        /* NOTE: S.center is NOT overwritten here - it stays the receiver's REAL
+           centre so sliceOffsetBins() can pan the visible window across the
+           received frame while the finger moves. Setting S.center = S.freq made
+           the pan offset always zero and the picture only jumped when the real
+           tuner confirmed on release. visCenterHz() follows the finger; the
+           received frame (S.lastFft) is centred on S.center; the offset between
+           the two slides the window live. The radio itself is moved either by
+           the per-step dspcontrol (per-client, instant) or by the deferred
+           setfrequency flush on pointer-up. */
         /* Move the demodulator on every step - it is per-client, instant on any
            OpenWebRX, and is what actually retunes that receiver. This is the
            universal fallback when the receiver has no magic key. */
@@ -3357,17 +3365,14 @@
     dbg.specRuler = { w: W, h: H, present: true };
   }
 
-  /* Repaint what the user sees without inventing a new waterfall row. */
+  /* Repaint what the user sees without inventing a new waterfall row - just
+     re-crop the full-frame history at the current dial/zoom so it tracks the
+     finger during a drag. */
   function repaintWaterfall() {
-    if (!S.wctx || !S.hist || !S.water) return;
-    var W = S.water.width, H = S.water.height;
-    S.wctx.drawImage(S.hist, 0, 0, S.hist.width, H, 0, 0, W, H);
-    S.wctx.save();
-    S.wctx.strokeStyle = CENTRE_COLOUR;
-    S.wctx.lineWidth = 1.4;
-    S.wctx.beginPath(); S.wctx.moveTo(W / 2, 0); S.wctx.lineTo(W / 2, H); S.wctx.stroke();
-    S.wctx.restore();
-    drawOverlay(W, H);
+    blitWaterfall();
+    if (!S.wctx) return;
+    var W = S.wctx.canvas ? S.wctx.canvas.width : 0;
+    dbg.shiftPx = Math.round(centreShiftPx(W || 400));
   }
   var dispRaf = 0;
   function scheduleDisplay() {
@@ -3392,14 +3397,13 @@
       S.rowU32 = new Uint32Array(img.data.buffer);
     }
     var row = S.rowU32, tbl = WF_LUT32;
-    var w0 = (n / 2) * (1 - 1 / (S.zoom > 1 ? S.zoom : 1)) + sliceOffsetBins(bins, n);
-    var ws = n / (S.zoom > 1 ? S.zoom : 1);
-    var wsh = centreShiftPx(bins);
+    /* Store the row as the FULL received frame (no zoom crop): one column per
+       FFT bin over the whole profile. The on-screen picture is then CROPPED from
+       this history at visCenterHz() in blitWaterfall(), so panning and zooming
+       are pure view changes that move with the finger instead of waiting for the
+       receiver. */
     for (var x = 0; x < bins; x++) {
-      var xx = x - wsh;
-      if (xx < 0) xx = 0;                                /* hold the edge bin, no black stripe */
-      if (xx >= bins) xx = bins - 1;
-      var pos = w0 + (xx / bins) * ws;
+      var pos = (x / bins) * n;
       var b0 = Math.floor(pos), b1 = b0 + 1;
       if (b0 < 0) b0 = 0; if (b1 > n - 1) b1 = n - 1; if (b0 > n - 1) b0 = n - 1;
       var fr = pos - b0;
@@ -3410,10 +3414,25 @@
       row[x] = tbl ? tbl[(dv * 255) | 0] : packedFallback(dv);
     }
     S.hctx.putImageData(img, 0, 0);
+    blitWaterfall();
+  }
 
-    var W = S.water.width;
-    S.wctx.drawImage(S.hist, 0, 0, bins, H, 0, 0, W, H);
-    /* the waterfall had no centre marker at all - only the cursor while tuning */
+  /* Re-draw the visible waterfall window from the full-frame history. The window
+     is centred on visCenterHz() (the dial) and spanned by visSpan() (the zoom),
+     so it slides over the stored history exactly as the finger moves - zero
+     receiver round-trips. This is what makes the waterfall track the finger. */
+  function blitWaterfall() {
+    if (!S.wctx || !S.hist || !S.water) return;
+    var bins = S.hist.width, W = S.water.width, H = S.water.height;
+    var spanHz = visSpan() || (S.bw || 1) || 1;
+    var c = visCenterHz() || (S.center || 0);
+    var bw = (S.bw || spanHz) || 1;
+    var fLo = 0.5 + (c - spanHz / 2 - (S.center || 0)) / bw;   /* frame-lhs as 0..1 */
+    var fW  = spanHz / bw;
+    var sx = Math.max(0, Math.round(fLo * bins));
+    var sw = Math.max(1, Math.round(fW * bins));
+    if (sx + sw > bins) sx = Math.max(0, bins - sw);
+    S.wctx.drawImage(S.hist, sx, 0, sw, H, 0, 0, W, H);
     S.wctx.save();
     S.wctx.strokeStyle = CENTRE_COLOUR;
     S.wctx.lineWidth = 1.4;
