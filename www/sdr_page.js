@@ -59,8 +59,7 @@
     spec: null, sctx: null,
     water: null, wctx: null,
     hist: null, hctx: null, hRow: 0,
-    keys: "", keyOpen: false,
-    sec: null            /* secondary FFT (digimode tuning aid): {spec,water,rows} */
+    keys: "", keyOpen: false
   };
 
   /* ---------------------------------------------------------- formatting */
@@ -492,7 +491,6 @@
     if (S.ws) { try { S.ws.close(); } catch (e) {} S.ws = null; }
     S.connected = false;
     setConnBtn(false);
-    try { secReset(); } catch (e) {}
     if (!quiet) status("Disconnected.", "");
   }
 
@@ -961,15 +959,6 @@
         cfgApply(j.value || j);
         break;
 
-      case "secondary_config":
-        /* digimodes publish the SECOND FFT width + IF rate so the client can
-           draw the decoder passband strip; capture it for tap-to-tune mapping */
-        if (j.value) {
-          if (j.value.secondary_bw !== undefined) S.secBw = +j.value.secondary_bw;
-          if (j.value.secondary_fft_size !== undefined) S.secFft = +j.value.secondary_fft_size;
-        }
-        break;
-
       case "secondary_demod":
         /* RDS / service text arrives as {type:"secondary_demod", value:{...}}.
            Digital decode messages (FT8/FT4 wsjt spots, APRS/AIS packets, CW
@@ -1088,26 +1077,6 @@
         var rr = rateForType(type, pcm.length);
         dbg.pickRate = type + ":" + rr;         /* which rate this stream is played at */
         if (audioReady()) pushAudio(pcm, rr);
-      } else if (type === 3) {           /* secondary FFT = digimode tuning aid */
-        /* Same codec as the main FFT (receiver.js decodes type 3 with fft_codec
-           + the same FFT_PAD). Draw a tiny spectrum + waterfall centred on the
-           decoder passband so the driver can SEE when a digimode/CW signal is
-           sitting in the middle of the passband = tuned. */
-        dbg.secFFT = (dbg.secFFT || 0) + 1; S.gotData = true;
-        var sf, kk;
-        if (S.fftComp === "adpcm") {
-          fftCodec.reset();
-          var sraw = fftCodec.decode(u8.subarray(1));
-          var sm = sraw.length - FFT_PAD;
-          if (sm < 8) return;
-          sf = new Float32Array(sm);
-          for (kk = 0; kk < sm; kk++) sf[kk] = sraw[kk + FFT_PAD] / 100;
-        } else {
-          var sn4 = n - (n % 4);
-          if (sn4 < 4) return;
-          sf = new Float32Array(body, 0, sn4 / 4);
-        }
-        secPush(sf);
       }
     } catch (e) {
       dbg.err = String((e && e.message) || e);
@@ -1345,7 +1314,6 @@
       });
     }
     setModeSel();
-    try { secSync(); } catch (e) {}      /* show/hide the digimode tuning strip */
     try { localStorage.setItem("sdr_mode", m); } catch (e) {}
     if (fromUser) {
       if (S.proto === "kiwi") { kiwiTune(); }
@@ -1440,7 +1408,6 @@
       };
     }
     setModeSel();
-    try { secSync(); } catch (e) {}      /* digimode tuning strip reflects the list */
   }
 
   function fillProfiles(list) {
@@ -1500,23 +1467,27 @@
   function freqDigits() {
     var f = el("sdrFreq");
     if (!f) return;
-    var s = pad3(S.freq);
+    /* full precision readout: MHz.kHz.Hz (e.g. 14.035.000), so the Hz digits
+       are visible and each digit has its own tuning step. */
+    var mhz = Math.floor(S.freq / 1e6);
+    var khz = Math.floor((S.freq % 1e6) / 1e3);
+    var hz  = S.freq % 1e3;
+    var s = mhz + "." + String(khz).padStart(3, "0") + "." + String(hz).padStart(3, "0");
     if (S.freqStr === s && f.firstChild) return;
     S.freqStr = s;
     f.textContent = "";
-    var right = s.length - 1 - s.indexOf(".");     /* digits right of the point */
     for (var i = 0; i < s.length; i++) {
-      if (s.charAt(i) === ".") { f.appendChild(document.createTextNode(".")); right--; continue; }
-      var k = 0;                                    /* digits to the right of this one */
+      if (s.charAt(i) === ".") { f.appendChild(document.createTextNode(".")); continue; }
+      var k = 0;                                    /* digits still to the right */
       for (var j = i + 1; j < s.length; j++) if (s.charAt(j) !== ".") k++;
       var sp = document.createElement("span");
       sp.textContent = s.charAt(i);
       sp.className = "sdr-dig";
       sp.setAttribute("data-k", String(k));
-      /* rightmost digit follows the tuning step when it is finer than 1 kHz */
-      var hz = Math.pow(10, 3 + k);
-      if (k === 0 && S.step && S.step < 1000) hz = S.step;
-      sp.setAttribute("data-step", String(hz));
+      /* place value in Hz: rightmost digit is 1 Hz */
+      var hzStep = Math.pow(10, k);
+      if (k === 1 && S.step && S.step < 10) hzStep = S.step;   /* fine step on Hz */
+      sp.setAttribute("data-step", String(hzStep));
       f.appendChild(sp);
     }
   }
@@ -3045,158 +3016,6 @@
     if (v.prog_type && v.radiotext) return;
     if (v.pi && (v.ps || v.radiotext)) return;
     decAdd(v);
-  }
-
-  /* ---- secondary FFT (digimode tuning aid) ----------------------------------
-     Digimodes stream a SECOND FFT (binary type 3) that shows the receiver's own
-     view of the decoder passband - a narrow slice centred on the demodulator.
-     We draw it as a tiny spectrum + waterfall under the modes. The tuning rule:
-     when the signal/signal trace sits in the MIDDLE of this strip, the mode is
-     tuned dead-on; move your dial until the decode line is centred (for CW the
-     tone blip sits centred; for FT8/SSTV/PSK the passband's wanted peak lands
-     centre). Kept tiny so it never steals layout from the main display. */
-  function secWidth() {
-    /* The canvases must match the width they are actually RENDERED at. When the
-       strip is hidden (class "hide") offsetWidth reads 0 - sizing 300px then,
-       and CSS stretching that 300px canvas up to the panel's real width is why
-       the tune graph only showed a fraction of it. Always measure against the
-       strip's own box while it is visible, and refresh when it becomes visible. */
-    var box = el("sdrSec");
-    var w = 0;
-    if (box) {
-      var r = box.getBoundingClientRect();
-      w = Math.round(r.width);
-      if (!w) w = box.offsetWidth;
-      if (!w) w = box.clientWidth;
-    }
-    if (w < 80) w = (document.body && document.body.offsetWidth) || 360;
-    return w - 20;                       /* leave a little padding inside the card */
-  }
-  function secInit() {
-    var sp = el("sdrSecSpec"), w = el("sdrSecWater");
-    if (!sp || !w) return false;
-    secWire();                                   /* tap-to-tune on the strip */
-    var W = secWidth();
-    if (S.sec) {
-      if (sp.width === W) return true;
-      /* re-size: keep the row buffer aligned to the new width */
-      sp.width = W; sp.height = 44; w.width = W; w.height = 70;
-      S.sec.W = W; S.sec.HS = 44; S.sec.HW = 70;
-      S.sec.sctx = sp.getContext("2d"); S.sec.wctx = w.getContext("2d");
-      S.sec.rows = [];
-      S.sec.dSctx = 0;
-      return true;
-    }
-    sp.width = W; sp.height = 44; w.width = W; w.height = 70;
-    S.sec = { sctx: sp.getContext("2d"), wctx: w.getContext("2d"),
-              W: W, HS: 44, HW: 70,
-              rows: [], dBmin: -120, dBmax: -30, last: null };
-    return true;
-  }
-  function secShow(show) {
-    var box = el("sdrSec");
-    if (!box) return false;
-    box.classList.toggle("hide", !show);
-    if (show) { secInit(); }             /* size to the real panel width (not 0) */
-    return true;
-  }
-  function secPush(f) {
-    if (!f || !f.length) return;
-    if (!S.sec && !secInit()) return;
-    var s = S.sec;
-    /* float levels into the same process the main spectrum uses */
-    var lo = s.dBmin, hi = s.dBmax, rng = (hi - lo) || 1;
-    var n = f.length;
-    if (n > s.W) {                          /* downsample to the strip width */
-      var ds = new Float32Array(s.W), st = n / s.W;
-      for (var i = 0; i < s.W; i++) {
-        var a = (i * st) | 0, b = ((i + 1) * st) | 0; if (b <= a) b = a + 1;
-        var mx = -1e9; for (var j = a; j < b && j < n; j++) if (f[j] > mx) mx = f[j];
-        ds[i] = (mx - lo) / rng;
-      }
-      s.last = ds;
-      secDrawSpec(ds); secWaterRow(ds);
-    } else {
-      var row = new Float32Array(Math.ceil(n));   /* keep it; draw widths adjust */
-      for (var q = 0; q < n; q++) row[q] = Math.max(0, Math.min(1, (f[q] - lo) / rng));
-      s.last = row;
-      secDrawSpec(row); secWaterRow(row);
-    }
-  }
-  function secDrawSpec(row) {
-    if (!S.sec || !row || !row.length) return;
-    var s = S.sec, g = s.sctx, W = s.W, H = s.HS;
-    g.fillStyle = "#060a10"; g.fillRect(0, 0, W, H);
-    var step = W / row.length;
-    g.fillStyle = "#38e6c2";
-    g.beginPath(); g.moveTo(0, H);
-    for (var i = 0; i < row.length; i++) {
-      var y = H - Math.round(row[i] * (H - 3)) - 1;
-      g.lineTo(i * step, y);
-    }
-    g.lineTo(W, H); g.closePath(); g.fill();
-    secCentre(g, W, H);
-  }
-  function secWaterRow(row) {
-    if (!S.sec || !row || !row.length) return;
-    var s = S.sec, g = s.wctx, W = s.W, H = s.HW;
-    s.rows.unshift(row); if (s.rows.length > H) s.rows.length = H;
-    g.fillStyle = "#04070c"; g.fillRect(0, 0, W, H);
-    for (var y = 0; y < s.rows.length; y++) {
-      var r = s.rows[y], st = W / r.length;
-      for (var i = 0; i < r.length; i++) {
-        var v = r[i];
-        if (v < 0.25) g.fillStyle = "rgba(0,80,140," + (v * 2.2).toFixed(2) + ")";
-        else if (v < 0.5) g.fillStyle = "rgba(0,180,120," + (v).toFixed(2) + ")";
-        else g.fillStyle = "rgba(255,210,60," + Math.min(1, (v - 0.5) * 1.6).toFixed(2) + ")";
-        g.fillRect(i * st, y, Math.max(1, st), 1);
-      }
-    }
-    secCentre(g, W, H);
-  }
-  function secCentre(g, W, H) {
-    g.strokeStyle = "rgba(255,60,60,.75)"; g.lineWidth = 1;
-    g.beginPath(); g.moveTo((W / 2) | 0, 0); g.lineTo((W / 2) | 0, H); g.stroke();
-  }
-  /* tap the decoder waterfall to move the dial onto that signal - the same
-     tap-to-tune the main waterfall has, but scoped to the decoder band. */
-  function secWire() {
-    var cv = el("sdrSecWater");
-    if (!cv || cv.dataset.secWired) return;
-    cv.dataset.secWired = "1";
-    cv.style.cursor = "crosshair";
-    cv.style.touchAction = "none";
-    cv.addEventListener("pointerdown", function (ev) {
-      try { ev.preventDefault(); } catch (e) {}
-      var s = S.sec;
-      if (!s || !s.W || !S.center) return;
-      var r = cv.getBoundingClientRect();
-      if (!(r.width > 8)) return;
-      var frac = (ev.clientX - r.left) / r.width;
-      frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
-      /* what does one screen-width of the strip span? prefer the receiver's
-         reported secondary bandwidth, else the mode passband */
-      var bw = S.secBw || 0;
-      var bd = bandCuts() || bpFor(S.mode) || null;
-      if (!bw && bd) bw = (bd.hi - bd.lo);
-      if (!bw || bw < 20) bw = 4000;                     /* sensible CW-ish fallback */
-      var want = S.center + (frac - 0.5) * bw;
-      setFreq(Math.round(want), true);                   /* receiver-follow centres it */
-      try { dbg("secTap " + (want / 1e6).toFixed(4) + " MHz"); } catch (e) {}
-    });
-    /* the strip sits under the modes - a tap must not fall through to the page */
-    cv.addEventListener("pointerdown", function (ev) { try { ev.stopPropagation(); } catch (e) {} }, true);
-  }
-  function secReset() {
-    if (S.sec) S.sec.rows = [];
-    var box = el("sdrSec"); if (box) box.classList.add("hide");
-  }
-  /* show the strip whenever a digimode is chosen and the receiver streams type 3 */
-  function secSync() {
-    var dm = S.allModes && S.allModes[S.mode];
-    var want = dm && dm.type === "digimode";
-    secShow(want);
-    if (!want) secReset();
   }
 
   function rdsUpdate(v) {

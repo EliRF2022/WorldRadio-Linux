@@ -621,7 +621,7 @@
       <p class="ld-tag">Live radio, HF receivers, aviation and weather — worldwide.</p>
       <div style="display:flex;align-items:center;gap:10px">
         <button id="ldSettings" title="Settings · Backup &amp; Restore" style="border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:12px;padding:8px 12px;font-size:16px;cursor:pointer">⚙️</button>
-        <span id="ldBuild" class="ld-ver">v2.1265</span>
+        <span id="ldBuild" class="ld-ver">v2.1266</span>
       </div>
     </div>
 
@@ -760,9 +760,6 @@
   #sdrDecLog .dmsg{border-bottom:1px solid rgba(255,255,255,.05);padding:3px 2px}
   #sdrDecLog .dmsg .dlbl{color:var(--dim,#7a8494)}
   #sdrDecLog .dmsg .dbody{color:#ffd27a;white-space:pre-wrap}
-  .sdr-sec{margin:4px 10px;padding:4px 10px;border:1px solid var(--line,#253041);border-radius:10px;background:var(--panel,#0b0f16)}
-  .sdr-sec-spec{width:100%;height:44px;display:block;margin-bottom:2px;background:#060a10}
-  .sdr-sec-water{width:100%;height:70px;display:block;background:#04070c}
   .smode{background:transparent;border:1px solid transparent;color:#cfd8e3;font-size:.86rem;
     font-weight:600;letter-spacing:.5px;padding:8px 13px;border-radius:18px;cursor:pointer;}
   .smode.on{background:#00e5ff;border-color:#00e5ff;color:#04121a;font-weight:800;}
@@ -937,11 +934,6 @@
   <div id="sdrDec" class="sdr-dec hide">
     <div class="sdr-dec-head"><span id="sdrDecTitle">Decoder</span><button class="mini" id="sdrDecClear" title="clear">✕</button></div>
     <div id="sdrDecLog"></div>
-  </div>
-
-  <div id="sdrSec" class="sdr-sec hide">
-    <canvas id="sdrSecSpec" class="sdr-sec-spec"></canvas>
-    <canvas id="sdrSecWater" class="sdr-sec-water"></canvas>
   </div>
 
   <div class="sdr-scale">
@@ -1154,9 +1146,9 @@
 <div id="load"><div class="spinner"></div><span id="loadTxt">Loading stations…</span></div>
 <div id="hint" class="hint">drag to spin · pinch to zoom · tap a dot to listen</div>
 
-<script src="leaflet.js?v=2.1265"></script>
-<script src="three.min.js?v=2.1265"></script>
-<script src="satellite.min.js?v=2.1265"></script>
+<script src="leaflet.js?v=2.1266"></script>
+<script src="three.min.js?v=2.1266"></script>
+<script src="satellite.min.js?v=2.1266"></script>
 <script>
 /* =====================================================================
    Desktop bridge.
@@ -5712,7 +5704,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
 
 /* ---------- bottom navigation bar (handled by native Android) ---------- */
 </script>
-<script src="sdr_page.js?v=2.1265?v=2.1265"></script>
+<script src="sdr_page.js?v=2.1266?v=2.1266"></script>
 <script>
 /* fill the title-bar build tag from the version shown on the home page.
    Inline and display-neutral: it touches nothing the SDR page does. */
@@ -5941,7 +5933,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   <video id="tvVideo" controls playsinline webkit-playsinline></video>
 </div>
 
-<script src="hls.min.js?v=2.1265"></script>
+<script src="hls.min.js?v=2.1266"></script>
 <script>
 /* ================= TV / IPTV =================================================
    Self-contained. Sources: an Xtream player_api/get.php URL (with username &
