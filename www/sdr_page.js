@@ -47,7 +47,7 @@
   var S = {
     ws: null, connected: false, ready: false,
     radios: [], pick: -1,
-    freq: 27065000, mode: "AM", step: 1000, tuneAt: null, zoom: 1, lastFft: null, visCenter: null,
+    freq: 27065000, mode: "AM", step: 1000, tuneAt: null, zoom: 1, lastFft: null,    visCenter: null, dragLive: false,
     wfMin: -120, wfMax: -30, wfUser: false, centerKnown: 0,
     rateOf: { 2: 12000, 4: 48000, 6: 48000 }, estByType: {}, rulerLabels: [], rds: null,
     proto: "owrx", kiwi: null, kiwiTs: null, kiwiTimer: null, audioUnlocked: false,
@@ -1225,8 +1225,13 @@
         /* RECEIVER-FOLLOW: also move the tuner so the signal really lands under
            the red line (the owner's receiver has allow_center_freq_changes +
            the magic key; others ignore setfrequency and simply keep the demod).
-           Throttle it - the shared tuner must not be moved 20x a second while
-           dragging. Fire when enough was travelled, or it is stale, or settling. */
+           While the finger is dragging we HOLD it: every setfrequency makes the
+           shared tuner retune and the stream briefly restart, which is exactly
+           the "slow and jumpy, not keeping up with my finger" slide. We move the
+           DISPLAY locally every frame (S.center = S.freq above, no network) so
+           the waterfall tracks the finger smoothly; the one real tuner hop is
+           flushed in up() when you lift. */
+        if (!S.dragLive) {
         var fromNow = Date.now();
         var lastF = S.lastFollowFreq || 0, lastT = S.lastFollowAt || 0;
         var travelled = Math.abs(S.freq - lastF);
@@ -1236,6 +1241,7 @@
         if (!lastF || movedEnough || stale) {
           S.lastFollowFreq = S.freq; S.lastFollowAt = fromNow;
           send({ type: "setfrequency", params: freqParams(S.freq) });
+        }
         }
       }
     }
@@ -1609,7 +1615,7 @@
     if (!S.bw) return 0;
     return S.bw / (S.zoom > 1 ? S.zoom : 1);
   }
-  var ZOOM_STEPS = [1, 2, 4, 8, 16];
+  var ZOOM_STEPS = [1, 2, 4, 8, 16, 32, 64, 128];
   function setZoom(z, quiet) {
     z = +z || 1;
     if (z < ZOOM_STEPS[0]) z = ZOOM_STEPS[0];
@@ -1717,6 +1723,7 @@
          same receiver follows your dial - that is the price of the picture
          tracking your finger.) */
       S.userTuneAt = Date.now();
+      S.dragLive = true;                 /* hold the shared tuner until we lift */
       setFreq(hz, due);                  /* only the radio message is throttled */
       scheduleDisplay();
       try { dbg("slide " + (hz / 1e6).toFixed(4) + " MHz"); } catch (e) {}
@@ -1724,13 +1731,22 @@
     }
 
     function up(ev, fromLeave) {
-      if (pointers[ev.pointerId] !== undefined) delete pointers[ev.pointerId];
-      if (Object.keys(pointers).length < 2) pinch = null;
-      if (!tuneDrag.on) return;
-      /* a slide that wanders off the canvas is a cancel, not a tap - otherwise
-         releasing outside the waterfall jumps the frequency */
-      var wasTap = !tuneDrag.moved && !fromLeave;
-      tuneDrag.on = false;
+    if (pointers[ev.pointerId] !== undefined) delete pointers[ev.pointerId];
+    if (Object.keys(pointers).length < 2) pinch = null;
+    if (!tuneDrag.on) return;
+    /* a slide that wanders off the canvas is a cancel, not a tap - otherwise
+       releasing outside the waterfall jumps the frequency */
+    var wasTap = !tuneDrag.moved && !fromLeave;
+    tuneDrag.on = false;
+    S.dragLive = false;
+    if (!wasTap && S.proto !== "kiwi") {
+      /* now that the finger is up, move the shared tuner to where the dial
+         stopped (and re-sync the demod). This was held during the drag so the
+         waterfall never had to ride a stream restart mid-slide. */
+      try { send({ type: "dspcontrol", params: dspParams() }); } catch (e) {}
+      try { send({ type: "setfrequency", params: freqParams(S.freq) }); } catch (e) {}
+      S.lastFollowFreq = S.freq; S.lastFollowAt = Date.now();
+    }
       if (wasTap) {                        /* a tap still jumps to that spot */
         var fav = favHitTest(cv, ev.clientX);      /* ...unless it is on a saved station */
         if (fav) {
@@ -3191,19 +3207,27 @@
     var sh = centreShiftPx(W);
     dbg.shiftPx = Math.round(sh);
     drawBand(g, W, H);
-    var binAt = function (x) {
+    /* interpolate the bin value at float index 'pos' - at deep zoom the FFT only
+       carries a few real bins in the window, so nearest-bin sampling shows up as
+       a blocky staircase. Blending the neighbour bins turns that into a smooth,
+       sharp trace instead. */
+    function binAtf(x) {
       var xx = x - sh;
       /* Out beyond the delivered frame? Hold the EDGE bin rather than skipping the column:
          skipping left a hole that only filled in when the receiver answered, which the owner
          saw as part of the graph vanishing and then catching up. */
       if (xx < 0) xx = 0;
       if (xx >= W) xx = W - 1;
-      var i = Math.floor(z0 + (xx / W) * zs);
-      return i < 0 ? 0 : (i > n - 1 ? n - 1 : i);
-    };
+      return z0 + (xx / W) * zs;
+    }
+    function binVal(pos) {
+      var i0 = Math.floor(pos), i1 = i0 + 1;
+      if (i0 < 0) i0 = 0; if (i1 > n - 1) i1 = n - 1; if (i0 > n - 1) i0 = n - 1;
+      var fr = pos - i0;
+      return f[i0] * (1 - fr) + f[i1] * fr;
+    }
     for (var x = 0; x < W; x++) {
-      var i = binAt(x);
-      var v = (f[i] - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
+      var v = (binVal(binAtf(x)) - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
       if (v < 0) v = 0; if (v > 1) v = 1;
       var y = H - v * (H - 2);
       if (x === 0) g.lineTo(0, y); else g.lineTo(x, y);
@@ -3216,8 +3240,7 @@
 
     g.beginPath();
     for (var x2 = 0; x2 < W; x2++) {
-      var i2 = binAt(x2);
-      var v2 = (f[i2] - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
+      var v2 = (binVal(binAtf(x2)) - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
       if (v2 < 0) v2 = 0; if (v2 > 1) v2 = 1;
       var y2 = H - v2 * (H - 2);
       if (x2 === 0) g.moveTo(0, y2); else g.lineTo(x2, y2);
@@ -3376,12 +3399,15 @@
       var xx = x - wsh;
       if (xx < 0) xx = 0;                                /* hold the edge bin, no black stripe */
       if (xx >= bins) xx = bins - 1;
-      var bi = Math.floor(w0 + (xx / bins) * ws);
-      if (bi < 0) bi = 0; else if (bi > n - 1) bi = n - 1;
-      var i = bi;
-      var v = (f[i] - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
-      v = v < 0 ? 0 : (v > 1 ? 1 : v);
-      row[x] = tbl ? tbl[(v * 255) | 0] : packedFallback(v);
+      var pos = w0 + (xx / bins) * ws;
+      var b0 = Math.floor(pos), b1 = b0 + 1;
+      if (b0 < 0) b0 = 0; if (b1 > n - 1) b1 = n - 1; if (b0 > n - 1) b0 = n - 1;
+      var fr = pos - b0;
+      var va = (f[b0] - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
+      var vb = (f[b1] - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
+      var dv = va * (1 - fr) + vb * fr;
+      if (dv < 0) dv = 0; else if (dv > 1) dv = 1;
+      row[x] = tbl ? tbl[(dv * 255) | 0] : packedFallback(dv);
     }
     S.hctx.putImageData(img, 0, 0);
 
