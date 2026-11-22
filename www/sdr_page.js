@@ -1227,28 +1227,36 @@
     if (fromUser) {
       if (S.proto === "kiwi") kiwiTune();
       else {
-        /* Tuning INSIDE the band this receiver is already streaming must be a
-           private move: we send the demodulator an offset from the receiver's
-           centre frequency, exactly like the receiver's own client does
-           (lib/Demodulator.js sends offset_freq). The receiver itself does not
-           move, so everybody else keeps their own frequency.
-           Only when you leave the band does the receiver have to move its
-           centre - and that one really does take everyone with it, because
-           there is only one tuner. */
-        /* The picture (spectrum + waterfall) is drawn around the receiver's own
-           centre frequency, so for it to follow your finger the receiver has to
-           come with it. That is how this receiver's own client behaves too. */
-        /* Tuning inside the band this receiver is already streaming is done by moving
-           OUR OWN demodulator (offset_freq) - exactly how the receiver's own client does
-           it. Nothing about the radio moves, so there is no stream restart and no delay,
-           and nobody else on the receiver is disturbed. Only when you leave the band
-           does the radio itself have to move - and that one takes a moment, because the
-           receiver restarts its stream. */
-        var off = S.center ? Math.round(S.freq - S.center) : 0;
-        if (S.center && S.bw && Math.abs(off) <= S.bw / 2 - (S.step || 0)) {
-          send({ type: "dspcontrol", params: dspParams() });
-        } else {
-          S.expectCenter = S.freq;
+        /* RECEIVER-FOLLOW tuning. The owner wants the radio to come to the dial:
+           as you tune, the receiver really moves so the signal you are on lands
+           under the red centre line - the spectrum + waterfall always show what
+           you are listening to, exactly like the receiver's own web page.
+           Sending only a demodulator offset (dspcontrol/offset_freq) left the
+           receiver parked and the signal at its physical position, so the
+           marker moved but the graph looked dead. Moving the receiver means the
+           tuner is shared (everyone else follows) - that is the accepted
+           trade-off, and it is what gives the live centred picture. We optimise
+           the DISPLAY immediately (S.center = S.freq) so there is no gap while
+           the receiver confirms. */
+        S.expectCenter = S.freq;
+        if (S.center) S.center = S.freq;      /* picture centres on the dial now */
+        /* Move the demodulator on every step - it is per-client, instant on any
+           OpenWebRX, and is what actually retunes that receiver. This is the
+           universal fallback when the receiver has no magic key. */
+        send({ type: "dspcontrol", params: dspParams() });
+        /* RECEIVER-FOLLOW: also move the tuner so the signal really lands under
+           the red line (the owner's receiver has allow_center_freq_changes +
+           the magic key; others ignore setfrequency and simply keep the demod).
+           Throttle it - the shared tuner must not be moved 20x a second while
+           dragging. Fire when enough was travelled, or it is stale, or settling. */
+        var fromNow = Date.now();
+        var lastF = S.lastFollowFreq || 0, lastT = S.lastFollowAt || 0;
+        var travelled = Math.abs(S.freq - lastF);
+        var spanNow = visSpan() || 100000;
+        var movedEnough = travelled >= Math.max(4000, Math.min(spanNow / 3, 60000));
+        var stale = (fromNow - lastT) > 700;
+        if (!lastF || movedEnough || stale) {
+          S.lastFollowFreq = S.freq; S.lastFollowAt = fromNow;
           send({ type: "setfrequency", params: freqParams(S.freq) });
         }
       }
