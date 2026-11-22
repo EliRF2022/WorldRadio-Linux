@@ -961,6 +961,15 @@
         cfgApply(j.value || j);
         break;
 
+      case "secondary_config":
+        /* digimodes publish the SECOND FFT width + IF rate so the client can
+           draw the decoder passband strip; capture it for tap-to-tune mapping */
+        if (j.value) {
+          if (j.value.secondary_bw !== undefined) S.secBw = +j.value.secondary_bw;
+          if (j.value.secondary_fft_size !== undefined) S.secFft = +j.value.secondary_fft_size;
+        }
+        break;
+
       case "secondary_demod":
         /* RDS / service text arrives as {type:"secondary_demod", value:{...}}.
            Digital decode messages (FT8/FT4 wsjt spots, APRS/AIS packets, CW
@@ -3066,19 +3075,21 @@
   function secInit() {
     var sp = el("sdrSecSpec"), w = el("sdrSecWater");
     if (!sp || !w) return false;
+    secWire();                                   /* tap-to-tune on the strip */
     var W = secWidth();
     if (S.sec) {
       if (sp.width === W) return true;
       /* re-size: keep the row buffer aligned to the new width */
-      sp.width = W; sp.height = 34; w.width = W; w.height = 40;
-      S.sec.W = W; S.sec.sctx = sp.getContext("2d"); S.sec.wctx = w.getContext("2d");
+      sp.width = W; sp.height = 44; w.width = W; w.height = 70;
+      S.sec.W = W; S.sec.HS = 44; S.sec.HW = 70;
+      S.sec.sctx = sp.getContext("2d"); S.sec.wctx = w.getContext("2d");
       S.sec.rows = [];
       S.sec.dSctx = 0;
       return true;
     }
-    sp.width = W; sp.height = 34; w.width = W; w.height = 40;
+    sp.width = W; sp.height = 44; w.width = W; w.height = 70;
     S.sec = { sctx: sp.getContext("2d"), wctx: w.getContext("2d"),
-              W: W, HS: 34, HW: 40,
+              W: W, HS: 44, HW: 70,
               rows: [], dBmin: -120, dBmax: -30, last: null };
     return true;
   }
@@ -3146,6 +3157,35 @@
   function secCentre(g, W, H) {
     g.strokeStyle = "rgba(255,60,60,.75)"; g.lineWidth = 1;
     g.beginPath(); g.moveTo((W / 2) | 0, 0); g.lineTo((W / 2) | 0, H); g.stroke();
+  }
+  /* tap the decoder waterfall to move the dial onto that signal - the same
+     tap-to-tune the main waterfall has, but scoped to the decoder band. */
+  function secWire() {
+    var cv = el("sdrSecWater");
+    if (!cv || cv.dataset.secWired) return;
+    cv.dataset.secWired = "1";
+    cv.style.cursor = "crosshair";
+    cv.style.touchAction = "none";
+    cv.addEventListener("pointerdown", function (ev) {
+      try { ev.preventDefault(); } catch (e) {}
+      var s = S.sec;
+      if (!s || !s.W || !S.center) return;
+      var r = cv.getBoundingClientRect();
+      if (!(r.width > 8)) return;
+      var frac = (ev.clientX - r.left) / r.width;
+      frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
+      /* what does one screen-width of the strip span? prefer the receiver's
+         reported secondary bandwidth, else the mode passband */
+      var bw = S.secBw || 0;
+      var bd = bandCuts() || bpFor(S.mode) || null;
+      if (!bw && bd) bw = (bd.hi - bd.lo);
+      if (!bw || bw < 20) bw = 4000;                     /* sensible CW-ish fallback */
+      var want = S.center + (frac - 0.5) * bw;
+      setFreq(Math.round(want), true);                   /* receiver-follow centres it */
+      try { dbg("secTap " + (want / 1e6).toFixed(4) + " MHz"); } catch (e) {}
+    });
+    /* the strip sits under the modes - a tap must not fall through to the page */
+    cv.addEventListener("pointerdown", function (ev) { try { ev.stopPropagation(); } catch (e) {} }, true);
   }
   function secReset() {
     if (S.sec) S.sec.rows = [];
