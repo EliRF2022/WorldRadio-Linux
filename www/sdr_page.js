@@ -1233,13 +1233,13 @@
         /* RECEIVER-FOLLOW: also move the tuner so the signal really lands under
            the red line (the owner's receiver has allow_center_freq_changes +
            the magic key; others ignore setfrequency and simply keep the demod).
-           While the finger is dragging we HOLD it: every setfrequency makes the
-           shared tuner retune and the stream briefly restart, which is exactly
-           the "slow and jumpy, not keeping up with my finger" slide. We move the
-           DISPLAY locally every frame (S.center = S.freq above, no network) so
-           the waterfall tracks the finger smoothly; the one real tuner hop is
-           flushed in up() when you lift. */
-        if (!S.dragLive) {
+           Throttled so the shared tuner is not pounded 20x/sec while dragging,
+           but it MUST keep firing during the drag: the received FFT frame is
+           centred on the receiver, so without a follow the picture runs out of
+           fresh data and sits still until you let go. The window pans over the
+           already-received frame instantly (sliceOffsetBins, no round-trip),
+           and this throttled follow brings new data when reach the frame edge -
+           together that is the "moves with my finger in real time" behaviour. */
         var fromNow = Date.now();
         var lastF = S.lastFollowFreq || 0, lastT = S.lastFollowAt || 0;
         var travelled = Math.abs(S.freq - lastF);
@@ -1249,7 +1249,6 @@
         if (!lastF || movedEnough || stale) {
           S.lastFollowFreq = S.freq; S.lastFollowAt = fromNow;
           send({ type: "setfrequency", params: freqParams(S.freq) });
-        }
         }
       }
     }
