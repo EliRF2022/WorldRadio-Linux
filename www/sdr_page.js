@@ -960,8 +960,13 @@
         break;
 
       case "secondary_demod":
-        /* RDS / service text arrives as {type:"secondary_demod", value:{...}} */
+        /* RDS / service text arrives as {type:"secondary_demod", value:{...}}.
+           Digital decode messages (FT8/FT4 wsjt spots, APRS/AIS packets, CW
+           text, pager, sonde, ACARS, ADS-B ...) arrive the SAME way, carrying
+           per-mode fields. Forward RDS to the RDS strip and surface all other
+           digimode decodes in the decoder panel. */
         rdsUpdate(j.value || j);
+        decHandle(j.value || j);
         break;
 
       case "error":
@@ -2920,6 +2925,87 @@
     } catch (e) {}
     return out;
   }
+  /* ---- digital decoder output panel ------------------------------------
+     digimode decodes (FT8/FT4 wsjt spots, APRS/AIS, CW, pager, sonde, ACARS,
+     ADS-B, ...) arrive as {"type":"secondary_demod","value":{...}} with
+     per-mode fields. We turn whichever fields arrive into a readable line and
+     log it, so the driver can SEE what the decoder is producing. */
+  function decText(v) {
+    if (!v || typeof v !== "object") return "";
+    try {
+      if (typeof v.message === "string" && v.message) return v.message;
+      if (typeof v.msg === "string" && v.msg) return v.msg;
+      if (typeof v.text === "string" && v.text) return v.text;
+      if (typeof v.data === "string" && v.data) return v.data;
+      if (typeof v.call === "string" || typeof v.callsign === "string") {
+        var bits = [];
+        var call = v.call || v.callsign;
+        if (call) bits.push(call);
+        if (v.mode) bits.push(v.mode);
+        if (v.snr !== undefined && v.snr !== null) bits.push(v.snr + " dB");
+        if (v.dt) bits.push(v.dt + "s");
+        if (v.freq) bits.push("F=" + v.freq);
+        if (typeof v.message === "string") bits.push(v.message);
+        return bits.join("  ");
+      }
+      if (typeof v.sender === "string" && v.sender) {
+        var b2 = [];
+        if (v.sender) b2.push(v.sender);
+        if (v.addressee) b2.push(">" + v.addressee);
+        if (v.path && v.path.length) b2.push("via " + v.path.join(","));
+        if (v.symbol) b2.push(v.symbol);
+        if (v.comment) b2.push(v.comment);
+        if (b2.length) return b2.join("  ");
+      }
+      var arr = [];
+      for (var k in v) {
+        if (k === "type" || k === "mode") continue;
+        var val = v[k];
+        if (val === null || val === undefined) continue;
+        if (typeof val === "boolean" || typeof val === "number") arr.push(k + "=" + val);
+        else if (typeof val === "string" && val) arr.push(val);
+      }
+      return arr.slice(0, 8).join("  ");
+    } catch (e) { return ""; }
+  }
+  function decShow(show) {
+    var p = el("sdrDec");
+    if (p) (show ? p.classList.remove("hide") : p.classList.add("hide"));
+  }
+  function decAdd(v) {
+    if (!v || typeof v !== "object") return;
+    var txt = decText(v);
+    if (!txt) return;
+    var mode = v.mode || S.mode || "DIG";
+    var box = el("sdrDecLog");
+    if (!box) return;
+    decShow(true);
+    var t = el("sdrDecTitle");
+    if (t) t.textContent = "DIG \u00b7 " + String(mode).toUpperCase();
+    var row = document.createElement("div");
+    row.className = "dmsg";
+    var lbl = document.createElement("span");
+    lbl.className = "dlbl";
+    var d = new Date();
+    lbl.textContent = (d.getHours() < 10 ? "0" : "") + d.getHours() + ":" +
+      (d.getMinutes() < 10 ? "0" : "") + d.getMinutes() + ":" +
+      (d.getSeconds() < 10 ? "0" : "") + d.getSeconds() + "  ";
+    var body = document.createElement("span");
+    body.className = "dbody";
+    body.textContent = txt;
+    row.appendChild(lbl); row.appendChild(body);
+    box.insertBefore(row, box.firstChild);
+    while (box.children.length > 80) box.removeChild(box.lastChild);
+  }
+  function decHandle(v) {
+    /* only surface non-RDS decode messages - RDS (ps/radiotext/service fields)
+       is handled by rdsUpdate and would just clutter the decoder log */
+    if (!v || typeof v !== "object") return;
+    if (v.prog_type && v.radiotext) return;
+    if (v.pi && (v.ps || v.radiotext)) return;
+    decAdd(v);
+  }
+
   function rdsUpdate(v) {
     if (!v || typeof v !== "object") return;
     var g = rdsTags(v);
@@ -3518,6 +3604,9 @@ function drawSmeter() {
     if (sc) sc.onclick = function () { sheetToggle(false); };
     var mb2 = el("sdrMenuBtn2");
     if (mb2) mb2.onclick = function () { sheetToggle(); };
+
+    var dc = el("sdrDecClear");
+    if (dc) dc.onclick = function () { var lg = el("sdrDecLog"); if (lg) lg.innerHTML = ""; };
 
     var cb = el("sdrConnBtn");
     if (cb) {
