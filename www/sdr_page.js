@@ -1236,13 +1236,16 @@
         /* RECEIVER-FOLLOW: also move the tuner so the signal really lands under
            the red line (the owner's receiver has allow_center_freq_changes +
            the magic key; others ignore setfrequency and simply keep the demod).
-           Throttled so the shared tuner is not pounded 20x/sec while dragging,
-           but it MUST keep firing during the drag: the received FFT frame is
-           centred on the receiver, so without a follow the picture runs out of
-           fresh data and sits still until you let go. The window pans over the
-           already-received frame instantly (sliceOffsetBins, no round-trip),
-           and this throttled follow brings new data when reach the frame edge -
-           together that is the "moves with my finger in real time" behaviour. */
+           During an active drag we HOLD it and pan the DISPLAY locally instead:
+           each setfrequency makes the shared tuner retune and the stream restart,
+           which is the "slow, laggy, not keeping up with my finger" drag. The
+           per-step dspcontrol above already retunes the demod instantly and
+           per-client, so you HEAR the signal move as you slide while the picture
+           pans over the already-received frame with zero round-trips. We flush
+           the one real tuner hop in up() when you lift. Outside a drag (tap,
+           keypad, band pick, release) the throttled follow still runs so the
+           receiver lands on the dial. */
+        if (!S.dragLive) {
         var fromNow = Date.now();
         var lastF = S.lastFollowFreq || 0, lastT = S.lastFollowAt || 0;
         var travelled = Math.abs(S.freq - lastF);
@@ -1252,6 +1255,7 @@
         if (!lastF || movedEnough || stale) {
           S.lastFollowFreq = S.freq; S.lastFollowAt = fromNow;
           send({ type: "setfrequency", params: freqParams(S.freq) });
+        }
         }
       }
     }
@@ -3425,12 +3429,12 @@
      receiver round-trips. This is what makes the waterfall track the finger. */
   function blitWaterfall() {
     if (!S.wctx || !S.hist || !S.water) return;
-    /* Smooth (bilinear) upsampling: at deep zoom the visible window is only a few
-       hundred bins stretched across the screen - nearest-neighbour scaling makes
-       that a blocky staircase. Canvas reports sctx smoothing via
-       imageSmoothingEnabled; enable it so the crop scales smoothly and the
-       waterfall keeps sharp edges even when zoomed into a narrow slice. */
-    try { S.wctx.imageSmoothingEnabled = true; S.wctx.imageSmoothingQuality = "high"; } catch (e) {}
+    /* CRISP rendering: disable canvas smoothing. Bilinear upsampling was smearing
+       the signal columns into "ghosts" - the sharp vertical streaks washed out.
+       Nearest-neighbour here is a pure 1:1 cell scale, so peaks stay defined. At
+       deep zoom a narrow slice will show discrete cells (sharp, not blocky-blurred)
+       which is the honest FFT pixel - that reads clearly instead of ghosting. */
+    try { S.wctx.imageSmoothingEnabled = false; } catch (e) {}
     var bins = S.hist.width, W = S.water.width, H = S.water.height;
     var spanHz = visSpan() || (S.bw || 1) || 1;
     var c = visCenterHz() || (S.center || 0);
