@@ -48,6 +48,7 @@
     ws: null, connected: false, ready: false,
     radios: [], pick: -1,
     freq: 27065000, mode: "AM", step: 1000, tuneAt: null, zoom: 1, lastFft: null,    visCenter: null, dragLive: false,
+    drawC: 0,                                 /* centre the DISPLAYED frame was captured at - updated only on new FFT, never by the receiver echo. Decouples the draw from S.center so a tuner confirmation cannot flash the picture back. */
     wfMin: -120, wfMax: -30, wfUser: false, centerKnown: 0,
     rateOf: { 2: 12000, 4: 48000, 6: 48000 }, estByType: {}, rulerLabels: [], rds: null,
     proto: "owrx", kiwi: null, kiwiTs: null, kiwiTimer: null, audioUnlocked: false,
@@ -95,6 +96,8 @@
     t.textContent = msg || "";
     t.className = "sdr-status" + (cls ? " " + cls : "");
   }
+  /* route to the on-screen connection log (see index.html 📋 Log panel) */
+  function logW(lvl, msg) { try { window.wrLog && window.wrLog(lvl, msg); } catch (e) {} }
 
   /* ------------------------------------------------------------- receivers */
   function sdrKeyFor(url, name) {
@@ -174,6 +177,8 @@
     var r = S.radios[S.pick];
     var host = kiwiHost(r && r.url);
     S.proto = "kiwi";
+    S.userClosed = false;
+    logW("info", "Connecting to KiwiSDR " + (r && (r.name || r.url) || host) + "…");
     S.kiwiTs = S.kiwiTs || String(Math.floor(Math.random() * 4.6e18));
     S.kiwi = { host: host, snd: null, wf: null, ready: false, dbMin: -100, dbMax: 0,
                smeterRaw: 0, frames: 0, wfLines: 0 };
@@ -190,6 +195,7 @@
     s.onopen = function () {
       S.connected = true; setConnBtn(true);
       status("Connecting to KiwiSDR " + (r.name || host) + " \u2026");
+      logW("info", "KiwiSDR socket opened — handshaking with " + (r.name || host) + "…");
       kiwiSay("SET auth t=kiwi p=#");
     };
     s.onmessage = function (ev) {
@@ -215,10 +221,12 @@
           kiwiSay("SET agc=1 hang=0 thresh=-100 slope=6 decay=1000 manGain=50");
           kiwiSay("SET compression=0");
           status("Connected \u00b7 " + (r.name || host) + " (KiwiSDR)", "ok");
+          logW("ok", "Connected to KiwiSDR " + (r.name || host) + ".");
           setModes(KIWI_LIST);
           markGood(r.url);
           startAudio();
           kiwiStart();
+          startDataWatchdog(r);
         }
         var ad = txt.match(/audio_adpcm_state=(-?\d+),(-?\d+)/);
         if (ad) { kiwiAdpcmReset(); S.kiwi.adpcm.stepIndex = Math.max(0, Math.min(88, +ad[1])); S.kiwi.adpcm.predictor = +ad[2]; }
@@ -269,11 +277,24 @@
     }
   }
   function kiwiClosed(ev, r) {
-    if (S.lastError) { status(S.lastError, "bad"); S.lastError = ""; }
-    else if (!S.gotData) status((r && (r.name || r.url) || "That KiwiSDR") +
-        " refused the connection \u2014 it may be full or offline.", "bad");
-    else status("Disconnected.", "");
+    var wasUp = S.connected, byUser = S.userClosed;
+    if (S.lastError) { status(S.lastError, "bad"); logW("err", S.lastError); S.lastError = ""; }
+    else if (!S.gotData) {
+      status((r && (r.name || r.url) || "That KiwiSDR") + " refused the connection — it may be full or offline.", "bad");
+      logW("err", ((r && (r.name || r.url)) || "That KiwiSDR") + " refused connection — full/offline?");
+    } else { status("Disconnected.", ""); logW("warn", "KiwiSDR socket closed."); }
     S.connected = false; setConnBtn(false);
+    /* auto-reconnect the Kiwi path too (it had none before) */
+    if (wasUp && S.gotData && !byUser && S.radios && S.radios[S.pick]) {
+      if (S._reTries === undefined) S._reTries = 0; else S._reTries++;
+      var d2 = Math.min(300 * S._reTries, 4000);
+      S._reTimer && clearTimeout(S._reTimer);
+      S._reTimer = setTimeout(function () {
+        if (S._reTries > 20) { status("Gave up reconnecting.", "bad"); logW("err", "Gave up reconnecting to KiwiSDR."); return; }
+        logW("info", "Auto-reconnecting (KiwiSDR, " + S._reTries + ")…");
+        kiwiConnect();
+      }, d2);
+    } else { S._reTries = 0; }
   }
   /* KiwiSDR sends IMA ADPCM. Its decoder (ImaAdpcmDecode) uses the TEXTBOOK order -
      take the step for the CURRENT index, apply the nibble, THEN advance the index -
@@ -440,11 +461,12 @@
     if (protoOf(r) === "kiwi") { kiwiConnect(); return; }
     S.proto = "owrx";
     /* coming back from a KiwiSDR: its 12 kHz must not leak into the OpenWebRX hd
-       stream, which really is 48 kHz (playing that at 12 kHz is the slow-motion bug) */
+        stream, which really is 48 kHz (playing that at 12 kHz is the slow-motion bug) */
     S.rateOf = { 2: 12000, 4: 48000, 6: 48000 };
     S.audioComp = "adpcm";
     var url = wsFor(r.url);
     status("Connecting to " + (r.name || r.url) + " …");
+    logW("info", "Connecting to " + (r.name || r.url) + "…");
     try { S.ws = new WebSocket(url); }
     catch (e) { status("That receiver's address looks wrong.", "bad"); return; }
     S.ws.binaryType = "arraybuffer";
@@ -453,9 +475,13 @@
     S.openedAt = performance.now();
     S.ws.onopen = function () {
       S.connected = true;
+      S.connectedLog = true;                   /* a later manual power-off should log */
+      S.userClosed = false;                    /* this is not a manual disconnect path */
+      S._reTries = 0;
       /* the handshake the receiver's own client sends - without it no stream */
       try { S.ws.send("SERVER DE CLIENT client=openwebrx.js type=receiver"); } catch (e) {}
       status("Connected · " + (r.name || ""), "ok");
+      logW("ok", "Connected to " + (r.name || r.url) + ".");
       setConnBtn(true);
       startAudio();
       send({ type: "setfrequency", params: freqParams(S.freq) });
@@ -463,6 +489,12 @@
       /* The demodulator does NOT run until the client sends this one. Without
          it the server streams FFT only - no audio, and no S-meter readings. */
       send({ type: "dspcontrol", action: "start" });
+      /* Keepalive: NATs / proxies / shared SDR hosts drop idle sockets with no
+         warning. Send a tiny keepalive every ~20s so the receiver knows we are
+         alive - this stops the "keeps disconnecting on other SDR radios" pattern. */
+      if (S._kaTimer) clearInterval(S._kaTimer);
+      S._kaTimer = setInterval(function () { send({ type: "keepalive" }); logW("info", "keepalive"); }, 20000);
+      startDataWatchdog(r);
     };
 
     S.ws.onmessage = function (ev) {
@@ -472,25 +504,89 @@
 
     S.ws.onclose = function () {
       var wasUp = S.connected, got = S.gotData;
+      var byUser = S.userClosed;
       S.connected = false;
+      S.connectedLog = false;
       setConnBtn(false);
-      if (S.lastError) { status(S.lastError, "bad"); S.lastError = ""; return; }
+      if (byUser) { logW("info", "Socket closed (by user/reset)."); return; }
+      if (S.lastError) { status(S.lastError, "bad"); logW("err", S.lastError); S.lastError = ""; return; }
       if (!got) {
         status((r.name || r.url) + " refused the connection — it may be full, offline, " +
                "or not an OpenWebRX receiver (KiwiSDR / WebSDR open from the Map view).", "bad");
-      } else status(wasUp ? "Disconnected." : "Disconnected.", "");
+        logW("err", (r.name || r.url) + " refused connection — full/offline/not OpenWebRX?");
+      } else { status(wasUp ? "Disconnected." : "Disconnected.", ""); logW("warn", "Socket closed."); }
+      /* Auto-reconnect: shared/public receivers (NAT, proxies, or their own idle
+         timeout) drop the socket without warning. If we ever got data (so it truly
+         is a working receiver) and this was NOT a deliberate user disconnect, bring
+         it straight back with a short backoff instead of leaving the user staring
+         at "Disconnected." indefinitely. */
+      var userClosed = (S.userClosed === S.ws || S.userClosed);
+      if (wasUp && got && !userClosed && S.radios && S.radios[S.pick]) {
+        var rx = S.radios[S.pick];
+        if (S._reTries === undefined) S._reTries = 0; else S._reTries++;
+        var delay = Math.min(300 * S._reTries, 4000);
+        S._reTimer && clearTimeout(S._reTimer);
+        S._reTimer = setTimeout(function () { reconnectNow(rx); }, delay);
+      } else { S._reTries = 0; }
     };
 
     S.ws.onerror = function () {
       S.lastError = "Cannot reach " + (r.name || r.url) + " — it looks offline, or the network is blocking it.";
+      logW("err", S.lastError);
     };
+  }
+
+  /* Reconnect in a way that respects whichever protocol we're on (Kiwi vs
+     OpenWebRX), so both paths heal the same way. */
+  function reconnectNow(r) {
+    if (S._reTries === undefined) S._reTries = 0; else S._reTries++;
+    if (S._reTries > 20) { status("Gave up reconnecting.", "bad"); logW("err", "Gave up reconnecting to " + (r && (r.name || r.url) || "receiver") + "."); return; }
+    if (S.proto === "kiwi") { kiwiDisconnect(); logW("info", "Auto-reconnecting (KiwiSDR, " + S._reTries + ")…"); kiwiConnect(); }
+    else { if (S.ws) { try { S.ws.close(); } catch (e) {} S.ws = null; } logW("info", "Auto-reconnecting (" + S._reTries + ")…"); connect(); }
+  }
+  /* Data-depth watchdog - catches SILENT drops (network stall, WebView hang,
+     receiver stops streaming, NAT idle-kill) that NEVER fire onclose or onerror,
+     which is exactly the "it disconnects but the log shows nothing" case. Check
+     every 15s: if we think we're connected but no NEW audio/FFT bytes have
+     arrived, log it in red and reconnect. Works for both Kiwi and OpenWebRX. */
+  function startDataWatchdog(r) {
+    if (S._wdTimer) clearInterval(S._wdTimer);
+    S._wdLast = (dbg.fft || 0) + (dbg.audio || 0);
+    S._wdQuiet = 0;
+    S._wdTimer = setInterval(function () {
+      var st = S.connected ? S.connected : false;
+      if (!st || S.userClosed) return;
+      var now = (dbg.fft || 0) + (dbg.audio || 0);
+      if (now === S._wdLast) {
+        S._wdQuiet = (S._wdQuiet || 0) + 1;
+        if (S._wdQuiet >= 1) {                       /* ~21s of no new data */
+          logW("err", "No data from " + (r && (r.name || r.url) || "radio") + " — reconnecting." + S._wdQuiet);
+          status("No data from " + (r && (r.name || r.url) || "radio") + " — reconnecting…", "bad");
+          S._wdQuiet = 0;
+          if (S.proto === "kiwi") { kiwiDisconnect(); }
+          else { if (S.ws) { try { S.ws.close(); } catch (e) {} S.ws = null; } }
+          S.connected = false; setConnBtn(false);
+          S._reTries = 0;
+          reconnectNow(r);
+        }
+      } else { S._wdLast = now; S._wdQuiet = 0; }
+    }, 15000);
   }
 
   function disconnect(quiet) {
     kiwiDisconnect();
+    S.userClosed = true;                       /* don't auto-reconnect after a manual disconnect */
+    S._reTries = 0;
+    if (S._reTimer) { clearTimeout(S._reTimer); S._reTimer = null; }
+    if (S._kaTimer) { clearInterval(S._kaTimer); S._kaTimer = null; }
+    if (S._wdTimer) { clearInterval(S._wdTimer); S._wdTimer = null; }
     if (S.ws) { try { S.ws.close(); } catch (e) {} S.ws = null; }
     S.connected = false;
     setConnBtn(false);
+    /* Only log "by user" on a GENUINE manual power-off while connected. connect()
+       calls disconnect(true) as a state reset, which must NOT spam the log. */
+    if (!quiet && S.connectedLog) logW("info", "Disconnected by user.");
+    S.connectedLog = false;
     if (!quiet) status("Disconnected.", "");
   }
 
@@ -909,8 +1005,19 @@
        moves the dial is you: a swipe, the keypad, or deliberately picking a band. */
     var bandMoved = !!(c.center_freq && S.center && +c.center_freq !== S.center);
     if (c.center_freq) {
-      S.center = +c.center_freq;
-      if (userTuneQuiet()) S.visCenter = S.center;
+      /* Ignore the stale echo: when we just told the receiver to move to
+         S.expectCenter, it first echoes back its OLD centre while the move is
+         in flight, then confirms the new one. Applying that old echo briefly
+         re-drew the waterfall at the last position - the "jumps back to where
+         it was, then snaps forward" flash on release. Only accept a centre that
+         matches what we asked for while a tune is still settling (~800ms); after
+         that, accept the receiver's report (band changes, other clients). */
+      var echoHz = +c.center_freq;
+      var settling = (Date.now() - (S.userTuneAt || 0)) < 800;
+      if (!settling || Math.abs(echoHz - (S.expectCenter || 0)) < 500) {
+        S.center = echoHz;
+        if (userTuneQuiet()) S.visCenter = S.center;
+      }
     }
     if (c.waterfall_colors) buildLut(c.waterfall_colors);
     packLut();
@@ -972,6 +1079,7 @@
       case "error":
         S.lastError = "Receiver said: " + (j.value || "error");
         status(S.lastError, "bad");
+        logW("err", S.lastError);
         break;
 
       case "smeter":
@@ -1038,6 +1146,17 @@
         dbg.bins = f.length;
         if (!S.fftSize) S.fftSize = f.length;
       S.lastFft = f;
+        /* The waterfall history rows are stored in the frame captured at S.drawC.
+         Drop them only on a real BAND jump (centre moved by more than a quarter
+         of the received frame). Do NOT reset on every small tuning move: each
+         setfrequency on release/recentre shifts S.center by a little, and a tight
+         500 Hz threshold was wiping and replaying the whole waterfall every time
+         the finger came up - the display should stay continuous through normal
+         tuning. A true band change still clears so old-band history can't smear. */
+        if (S.drawC && S.center && Math.abs((S.center||0) - (S.drawC||0)) > (S.bw || 200000) * 0.25) {
+          resetWaterfall();
+        }
+        S.drawC = S.center || S.freq;        /* the centre THIS frame was captured at */
         for (k = 0; k < f.length; k++) {
           if (f[k] < dbg.fmin) dbg.fmin = f[k];
           if (f[k] > dbg.fmax) dbg.fmax = f[k];
@@ -1208,17 +1327,14 @@
     if (fromUser) {
       if (S.proto === "kiwi") kiwiTune();
       else {
-        /* RECEIVER-FOLLOW tuning. The owner wants the radio to come to the dial:
-           as you tune, the receiver really moves so the signal you are on lands
-           under the red centre line - the spectrum + waterfall always show what
-           you are listening to, exactly like the receiver's own web page.
-           Sending only a demodulator offset (dspcontrol/offset_freq) left the
-           receiver parked and the signal at its physical position, so the
-           marker moved but the graph looked dead. Moving the receiver means the
-           tuner is shared (everyone else follows) - that is the accepted
-           trade-off, and it is what gives the live centred picture. We optimise
-           the DISPLAY immediately (S.center = S.freq) so there is no gap while
-           the receiver confirms. */
+        /* INSTANT inside the delivered frame. drawC stays the receiver's real centre
+           (where the FFT data physically is - it advances when the receiver confirms).
+           The visible slice is centred on the DIAL, so as your finger slides within
+           the delivered bandwidth the line pans across data that is ALREADY there -
+           it follows the finger with zero radio round-trip, no lag. On release a
+           deferred setfrequency flushes so the tuner recentres and the frame follows.
+           Do NOT optimistically move drawC to the dial: that collapses the pan
+           offset to zero and the line only advances when new FFTs arrive = the lag. */
         S.expectCenter = S.freq;
         /* NOTE: S.center is NOT overwritten here - it stays the receiver's REAL
            centre so sliceOffsetBins() can pan the visible window across the
@@ -1229,34 +1345,31 @@
            the two slides the window live. The radio itself is moved either by
            the per-step dspcontrol (per-client, instant) or by the deferred
            setfrequency flush on pointer-up. */
-        /* Move the demodulator on every step - it is per-client, instant on any
-           OpenWebRX, and is what actually retunes that receiver. This is the
-           universal fallback when the receiver has no magic key. */
-        send({ type: "dspcontrol", params: dspParams() });
-        /* RECEIVER-FOLLOW: also move the tuner so the signal really lands under
-           the red line (the owner's receiver has allow_center_freq_changes +
-           the magic key; others ignore setfrequency and simply keep the demod).
-           During an active drag we HOLD it and pan the DISPLAY locally instead:
-           each setfrequency makes the shared tuner retune and the stream restart,
-           which is the "slow, laggy, not keeping up with my finger" drag. The
-           per-step dspcontrol above already retunes the demod instantly and
-           per-client, so you HEAR the signal move as you slide while the picture
-           pans over the already-received frame with zero round-trips. We flush
-           the one real tuner hop in up() when you lift. Outside a drag (tap,
-           keypad, band pick, release) the throttled follow still runs so the
-           receiver lands on the dial. */
-        if (!S.dragLive) {
-        var fromNow = Date.now();
-        var lastF = S.lastFollowFreq || 0, lastT = S.lastFollowAt || 0;
-        var travelled = Math.abs(S.freq - lastF);
-        var spanNow = visSpan() || 100000;
-        var movedEnough = travelled >= Math.max(4000, Math.min(spanNow / 3, 60000));
-        var stale = (fromNow - lastT) > 700;
-        if (!lastF || movedEnough || stale) {
-          S.lastFollowFreq = S.freq; S.lastFollowAt = fromNow;
-          send({ type: "setfrequency", params: freqParams(S.freq) });
+        /* DURING A DRAG: tune this client's demodulator by offset (instant, private,
+           per-client) to carry the audio, and pan the display over the delivered
+           frame. AND chase the tuner at the frame EDGE so the band is continuous:
+           once the dial reaches / crosses the delivered frame's edge there is no
+           more data, so a throttled setfrequency re-delivers a fresh frame centred
+           on the dial and the waterfall keeps scrolling past the old "wall". The
+           throttle keeps it calm (no runaway thrash); the recoiled frame just moves
+           the picture along with the finger instead of hitting a dead end. */
+        var centreHz = (S.center || S.freq || 0);
+        var offHz = Math.round(S.freq - centreHz);
+        send({ type: "dspcontrol", params: dspAtOffset(offHz) });
+        /* chase the tuner when the dial is about to run off the delivered frame -
+           at the edge (>= 25% of the frame out from centre already), throw a
+           throttled setfrequency to the dial so the frame recentres and the sweep
+           keeps going. 25% hysteresis: within the middle there's real room to pan,
+           no need to restart the stream; at the rim we pull the frame along. */
+        var edge = (S.center && S.bw) ? (S.bw * 0.25) : 0;
+        if (Math.abs(S.freq - centreHz) >= edge) {
+          var now = Date.now();
+          if ((now - (S.lastRetuneAt || 0) > 150) && (S.lastRetuneFreq === null || S.freq !== S.lastRetuneFreq)) {
+            S.lastRetuneAt = now; S.lastRetuneFreq = S.freq;
+            send({ type: "setfrequency", params: freqParams(S.freq) });
+          }
         }
-        }
+        S.dragLive = true;
       }
     }
   }
@@ -1266,14 +1379,35 @@
   /* modes are identified by the ID the receiver uses (nfm, wfm, lsb...), while
      the button shows the friendly name. */
   var RDS_MODES = { wfm: 1, nfm: 1, am: 1 };      /* demods that can carry RDS/service text */
-  function dspParams() {
-    /* offset_freq is where the DEMODULATOR sits inside the passband, and the
+  /* Build a per-client dspcontrol payload tuned to a given offset from the current
+     tuner centre, preserving the active mode/filter/secondary decoder. Used by the
+     LIVE drag path (offset = dial - centre, so the audio follows the finger) and by
+     in-frame release (same offset, so it does NOT snap back to the old station).
+     dspParams() is the "land the demod at 0" twin for when the tuner itself moves. */
+  function dspAtOffset(offHz) {
+    var dm = S.allModes && S.allModes[S.mode];
+    var isDigi = dm && dm.type === "digimode";
+    var primary = "am";
+    if (isDigi) { var u = dm.under; primary = (u && u !== "empty") ? u : "usb"; }
+    else primary = S.mode;
+    var p = { mod: primary, offset_freq: (offHz === 0) ? 0 : Math.round(offHz || 0) };
+    if (isDigi) p.secondary_mod = S.mode;
+    else if (RDS_MODES[S.mode]) p.secondary_mod = "rds";
+    var bpk = bpKey(primary);
+    if (bpk && S.modeBp[bpk]) { p.low_cut = S.modeBp[bpk].low_cut; p.high_cut = S.modeBp[bpk].high_cut; }
+    else { var bd = bpFor(primary); if (bd) { p.low_cut = bd.lo; p.high_cut = bd.hi; } }
+    return p;
+  }
+  function dspParams(targetTo) {    /* offset_freq is where the DEMODULATOR sits inside the passband, and the
        receiver keeps its last value if you never send one. Leave it out and the
        demod can sit off to the side: the spectrum and waterfall still show the
        signal (they are drawn around the centre frequency) while the audio is
        nothing but noise. A receiver whose profile happens to hold offset 0 works
        fine, which is why this only bites on some servers. The app always
-       re-centres on tune, so the demod belongs at 0. */
+       re-centres on tune, so the demod belongs at 0.
+       `targetTo` = the frequency the receiver is ABOUT to centre on (a tuner move
+       in flight). Compute the offset against that so the demod lands exactly on
+       the dial instead of carrying the old centre's offset. */
     /* digital modes are secondary: we keep the underlying analog modulator and
        ask the receiver to run the digital decoder on top of it (same as its own
        client does via secondary_mod). */
@@ -1287,8 +1421,14 @@
     } else {
       primary = S.mode;
     }
-    /* where the demodulator sits inside the band - our own private position */
-    var p = { mod: primary, offset_freq: Math.round(S.freq - (S.center || S.freq)) };
+    /* where the demodulator sits: ALWAYS at the tuner centre (offset 0). The radio
+       is steered to the dial with setfrequency (the magic key moves the real
+       tuner), so the demod belongs at centre = exactly on the dial. Sending a live
+       per-client offset AT THE SAME TIME as setfrequency is what made it land
+       off-frequency: when the tuner moved but the offset was computed against the
+       old centre, the demod sat on dial + residual - jumpy, and you had to tap the
+       waterfall to bring it back on centre. One steering signal only. */
+    var p = { mod: primary, offset_freq: 0 };
     if (isDigi) p.secondary_mod = S.mode;             /* run the digital decoder */
     else if (RDS_MODES[S.mode]) p.secondary_mod = "rds";  /* station text stream */
     else if (S.mode !== primary) p.secondary_mod = "";    /* clear a stale decoder */
@@ -1452,6 +1592,9 @@
         S.freq = Math.round(p.center);
         S.visCenter = p.center;
         S.expectCenter = p.center;
+        S.drawC = p.center;                    /* re-anchor the frame at once (zoom-out) */
+        resetWaterfall();
+        S.lastFft = null;
         try { localStorage.setItem("sdr_freq", S.freq); } catch (e) {}
         drawFreq(); drawScale(); drawMismatch();
         status("Switching to " + p.name + " …");
@@ -1563,9 +1706,10 @@
     var l = el("sdrScaleL"), r = el("sdrScaleR");
     if (!l || !r) return;
     if (!S.center || !S.bw) { l.textContent = "—"; r.textContent = "—"; return; }
+    var c = visCenterHz() || S.center;    /* the DIAL, not the shared tuner centre - so the corner MHz march with the finger exactly like the ruler strip */
     var half = visSpan() / 2;
-    l.textContent = ((S.center - half) / 1e6).toFixed(3);
-    r.textContent = ((S.center + half) / 1e6).toFixed(3);
+    l.textContent = ((c - half) / 1e6).toFixed(3);
+    r.textContent = ((c + half) / 1e6).toFixed(3);
     var sp = el("sdrSpanLbl");
     if (sp && S.bw) sp.textContent = (visSpan() / 1000).toFixed(visSpan() < 10000 ? 1 : 0) + " kHz";
   }
@@ -1594,20 +1738,16 @@
      can take over the display again? */
   function userTuneQuiet() { return !(S.bwDrag || tuneDrag.on) && (Date.now() - (S.userTuneAt || 0) > 700); }
   function visCenterHz() {
-    var v = (S.visCenter === null || S.visCenter === undefined) ? (S.center || S.freq) : S.visCenter;
-    /* The picture can only show spectrum the receiver is actually streaming. The window
-       follows your finger, but it stops at the edge of that data - otherwise the trace
-       slides off the data and the display looks dead while the audio is perfectly fine.
-       (Your frequency keeps going; only the drawing stops here.) */
-    if (S.center && S.bw) {
-      var half = S.bw / 2 - visSpan() / 2;
-      if (half > 0) {
-        if (v < S.center - half) v = S.center - half;
-        else if (v > S.center + half) v = S.center + half;
-      } else {
-        v = S.center;      /* window is the whole frame: stay on it, never off the data */
-      }
-    }
+    var v = (S.visCenter === null || S.visCenter === undefined) ? (S.freq || S.drawC || 0) : S.visCenter;
+    /* ONE source of truth - the dial (S.freq). No clamping to the received frame
+       centre. With per-client tuning the dial is wherever THIS operator listens,
+       and the ruler, the needle and the frequency display must all read the same
+       number. Clamping visCenterHz to S.drawC (the frame centre) was what made
+       the ruler sit on one fixed frequency (~5 MHz in the report) while the
+       display showed the true dial (12 MHz) - "nothing is matching". The visible
+       window now always centres on the dial; the spectrum/waterfall slice still
+       only shows real received data (blank past the frame edge), but the numbers
+       above it are always accurate for where you are listening. */
     return v;
   }
   /* pixel shift that maps a bin drawn around S.center onto the visible centre */
@@ -1620,8 +1760,8 @@
   }
   /* where the visible window starts inside the frame's bins */
   function sliceOffsetBins(bins, n) {
-    if (!S.center || !S.bw || !n) return 0;
-    var off = ((visCenterHz() - S.center) / S.bw) * n;
+    if (!S.drawC || !S.bw || !n) return 0;
+    var off = ((visCenterHz() - S.drawC) / S.bw) * n;
     if (!isFinite(off)) return 0;
     return off;
   }
@@ -1644,7 +1784,61 @@
   function zoomNudge(dir) {
     var i = ZOOM_STEPS.indexOf(S.zoom);
     if (i < 0) i = 0;
+    /* Zoom OUT at the floor: pull the WIDEST profile covering the dial instead of
+       stopping at this profile's own bandwidth (that was the "can't zoom out past
+       500 kHz" wall - the received frame only spans the selected profile). */
+    if (dir < 0 && i <= 0) {
+      if (widenProfile()) return;
+    }
     setZoom(ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, i + dir))]);
+  }
+  /* Pick the profile whose band contains `hz` (widest wins) and SELECT it - send
+     selectprofile + setfrequency centred on hz so the receiver actually moves to a
+     different band when the dial jumps there. Returns true if it switched. */
+  function profileFor(hz) {
+    var profs = S.profs, best = null;
+    if (!profs) return false;
+    for (var id in profs) {
+      var p = profs[id];
+      if (!p || !p.center || !p.bw) continue;
+      if (hz < p.center - p.bw / 2 || hz > p.center + p.bw / 2) continue;
+      if (!best || p.bw > best.bw) best = { id: id, bw: p.bw, center: p.center, name: p.name };
+    }
+    if (!best) return false;
+    if (best.center === (S.center || 0) && (S.bw || 0) === best.bw) return false;   /* already on it */
+    try { dbg("band-> " + best.name + " @ " + (best.center / 1e6).toFixed(3) + "MHz"); } catch (e) {}
+    send({ type: "setfrequency", params: freqParams(hz) });
+    send({ type: "selectprofile", params: { profile: best.id } });
+    S.expectCenter = hz; S.visCenter = hz; S.center = hz; S.drawC = hz;
+    if (best.bw > (S.bw || 0)) S.bw = best.bw;
+    resetWaterfall();
+    drawFreq(); drawScale(); drawMismatch();
+    return true;
+  }
+  /* Pick the widest profile whose coverage contains the current dial and switch to
+     it, so zooming out shows more of the band. Returns true if it switched. */
+  function widenProfile() {
+    var profs = S.profs, cur = S.freq, best = null;
+    if (!profs) return false;
+    for (var id in profs) {
+      var p = profs[id];
+      if (!p || !p.center || !p.bw) continue;
+      if (cur < p.center - p.bw / 2 || cur > p.center + p.bw / 2) continue;
+      if (!best || p.bw > best.bw) best = { id: id, bw: p.bw, center: p.center, name: p.name };
+    }
+    if (!best || best.bw <= (S.bw || 0)) return false;
+    try { dbg("widen-> " + best.name + " " + (best.bw / 1000) + "kHz"); } catch (e) {}
+    /* Centre the WIDER frame on the DIAL, not the profile's own centre - this runs
+       while the finger is sweeping (auto-widen at the frame edge), so the display
+       must follow the dial, never yank it off the channel the user is on. */
+    send({ type: "setfrequency", params: freqParams(cur) });
+    send({ type: "selectprofile", params: { profile: best.id } });
+    S.expectCenter = cur;
+    S.visCenter = cur;
+    if (best.bw > (S.bw || 0)) S.bw = best.bw;   /* widen the visible span right away */
+    drawFreq(); drawScale(); drawMismatch();
+    status("Widened to " + (best.name || best.id) + " …");
+    return true;
   }
   /* keep the newest FFT frame so a zoom/scale change redraws instantly instead of
      waiting for the next one (which looks like the control did nothing) */
@@ -1704,6 +1898,11 @@
               if (Math.abs(ZOOM_STEPS[i] - z) < Math.abs(ZOOM_STEPS[best] - z)) best = i;
             return best;
           }
+          /* Pinching OUT to the very floor (or below) widens the receiver profile
+             instead of stopping at this profile's own bandwidth. */
+          if (z < ZOOM_STEPS[0] && z < pinch.z0) {
+            if (widenProfile()) { pinch.z0 = z; return; }
+          }
           if (snapped !== S.zoom) setZoom(snapped);
         }
         try { ev.preventDefault(); } catch (e) {}
@@ -1722,8 +1921,14 @@
       /* Update the display on EVERY move so the spectrum tracks the finger; only
          the message to the radio is throttled. Throttling the display itself was
          what made the slide feel like it lagged behind the waterfall. */
-      var due = (Date.now() - tuneDrag.last >= 45);   /* 120ms made the radio lag behind the finger */
-      if (due) tuneDrag.last = Date.now();
+      /* Update the display on EVERY move so the spectrum tracks the finger; the
+         message to the radio is throttled inside setFreq (it carries its own
+         throttle on setfrequency), so pass fromUser=true on every move - the radio
+         retunes in REAL TIME with the finger instead of only on release. Passing
+         the `due` bool made fromUser=false on most moves, which skipped the whole
+         radio-retune block - the display slid but the receiver stayed put until
+         finger-up. */
+      setFreq(hz, true);                  /* radio follows live; retune throttled inside */
       /* The display is centred on the BAND this receiver is streaming, because that
          is where the FFT data comes from. So a swipe must not drag the display
          centre - it moves our own marker inside the band and stops at the edges.
@@ -1738,7 +1943,20 @@
          tracking your finger.) */
       S.userTuneAt = Date.now();
       S.dragLive = true;                 /* hold the shared tuner until we lift */
-      setFreq(hz, due);                  /* only the radio message is throttled */
+      /* The received frame only covers S.drawC +/- S.bw/2 - swipe the dial past
+         that edge and the waterfall has no data left (it sits still) while the
+         ruler/dial keep counting. When the dial nears/leaves the edge, widen the
+         shared profile (selectprofile) so the receiver re-centres a wider frame
+         around where the finger is and the waterfall keeps following. Per-client
+         dspcontrol still gives each operator independent audio inside a shared
+         wide frame. Throttled so it only fires once per boundary, not every px. */
+      if (S.drawC && S.bw) {
+        var leftEdge = hz < (S.drawC - S.bw / 2 + visSpan() / 2);
+        var rightEdge = hz > (S.drawC + S.bw / 2 - visSpan() / 2);
+        if ((leftEdge || rightEdge) && Date.now() - (S.lastWidenAt || 0) > 1200) {
+          S.lastWidenAt = Date.now(); widenProfile();
+        }
+      }
       scheduleDisplay();
       try { dbg("slide " + (hz / 1e6).toFixed(4) + " MHz"); } catch (e) {}
       try { ev.preventDefault(); } catch (e) {}
@@ -1754,11 +1972,24 @@
     tuneDrag.on = false;
     S.dragLive = false;
     if (!wasTap && S.proto !== "kiwi") {
-      /* now that the finger is up, move the shared tuner to where the dial
-         stopped (and re-sync the demod). This was held during the drag so the
-         waterfall never had to ride a stream restart mid-slide. */
-      try { send({ type: "dspcontrol", params: dspParams() }); } catch (e) {}
-      try { send({ type: "setfrequency", params: freqParams(S.freq) }); } catch (e) {}
+      /* finger up: if the dial is still INSIDE the currently delivered frame, stay
+         put. The per-client demod offset already tuned us to the dial while we
+         held, so we MUST re-send that SAME offset (not dspParams(), which resets
+         offset_freq to 0 = the tuner centre = the OLD station) or the audio snaps
+         back to the last station even though the display never moved. Only when the
+         dial left the delivered frame do we move the tuner, and then the demod
+         goes to offset 0 (tuner centre = the dial). */
+      var inFrame = S.center && S.bw && Math.abs((S.freq||0) - (S.center||0)) < S.bw / 2;
+      if (!inFrame) {
+        try { send({ type: "setfrequency", params: freqParams(S.freq) }); } catch (e) {}
+        try { send({ type: "dspcontrol", params: dspParams(S.freq) }); } catch (e) {}
+      } else {
+        /* keep the SAME per-client offset we were on - offset_freq = dial - centre.
+           dspParams() would zero it, so use dspAtOffset() like the live drag path. */
+        var centreHz = (S.center || S.freq || 0);
+        var offHz2 = Math.round((S.freq||0) - centreHz);
+        try { send({ type: "dspcontrol", params: dspAtOffset(offHz2) }); } catch (e) {}
+      }
       S.lastFollowFreq = S.freq; S.lastFollowAt = Date.now();
     }
       if (wasTap) {                        /* a tap still jumps to that spot */
@@ -1898,7 +2129,17 @@
     if (a) a.oninput = function () { wfSet(a.value, undefined, true); };
     if (b) b.oninput = function () { wfSet(undefined, b.value, true); };
     var au = el("sdrWfAuto"); if (au) au.onclick = wfAuto;
-    var rs = el("sdrWfRst"); if (rs) rs.onclick = function () { S.wfUser = false; wfSet(-88, -20, false); };
+    var rs = el("sdrWfRst"); if (rs) rs.onclick = function () { S.wfUser = false; wfSet(-110, -32, false);
+      /* Reset also returns the S-meter calibration to the universal S9 = -73 dBm
+         reference (the value that matches other hams' meters). The owner picked the
+         waterfall floor -110 / top -32; -73 is used instead of -32 for the S-meter
+         because -32 dBm would read S9 far too hot (S9+41) and move the meter away
+         from the standard. Change to -32 here if a device-specific calibration is wanted. */
+      S.smeterOffset = -73; try { localStorage.setItem("sdr_off", S.smeterOffset); } catch (e) {}
+      var off = el("sdrOffset"); if (off) off.value = String(S.smeterOffset);
+      try { drawSmeter(); } catch (e) {}
+      try { drawCalRule(); } catch (e) {}
+    };
     wfSet(S.wfMin, S.wfMax, S.wfUser);
   }
 
@@ -2923,28 +3164,48 @@
     for (var f = first; f <= hi; f += step) {
       var x = ((f - lo) / span) * W;
       if (x < 12 || x > W - 12) continue;
-      var isCentre = Math.abs(f - c) < step / 2;         /* the dial frequency */
-      if (isCentre) { x = W / 2; }
-      dbg.rulerTicks.push({ f: f, x: Math.round(x), centre: isCentre });
-      g.strokeStyle = bottom ? "rgba(255,255,255,.20)"
-                             : (isCentre ? "rgba(0,229,255,.95)" : "rgba(255,255,255,.14)");
-      g.lineWidth = isCentre ? 2 : 1;
+      dbg.rulerTicks.push({ f: f, x: Math.round(x), centre: false });
+      g.strokeStyle = bottom ? "rgba(255,255,255,.20)" : "rgba(255,255,255,.14)";
+      g.lineWidth = 1;
       g.beginPath();
       g.moveTo(x + 0.5, bottom ? H - 13 : 0);
-      g.lineTo(x + 0.5, (bottom ? H - 13 : 0) + (isCentre ? 9 : 5));
+      g.lineTo(x + 0.5, (bottom ? H - 13 : 0) + 5);
       g.stroke();
       var lbl = span < 120000 ? (f / 1000).toFixed(0) + " kHz"
               : span < 3000000 ? (f / 1e6).toFixed(3)
               : (f / 1e6).toFixed(2);
       labels.push(lbl);
-      /* the dial frequency is labelled in cyan and bold, matching its tick */
-      g.font = isCentre ? "800 11px ui-monospace, Menlo, Consolas, monospace"
-                        : "600 11px ui-monospace, Menlo, Consolas, monospace";
+      /* every grid tick is a plain, equal label - NO special bold/cyan treatment
+         for the frequency that happens to sit under the centre marker. The old
+         "centre" branch snapped that one tick to the exact middle and rounded it
+         to the dial, which made it stand out, read inaccurately and crowd the
+         ruler. The dial itself is still marked by the drawn centre line/marker. */
+      g.font = "600 11px ui-monospace, Menlo, Consolas, monospace";
       var tw = g.measureText(lbl).width;
-      g.fillStyle = isCentre ? "rgba(0,22,30,.88)" : "rgba(0,0,0,.55)";
+      g.fillStyle = "rgba(0,0,0,.55)";
       g.fillRect(x - tw / 2 - 2, y, tw + 4, 12);
-      g.fillStyle = isCentre ? "#00e5ff" : "rgba(207,216,227,.93)";
+      g.fillStyle = "rgba(207,216,227,.93)";
       g.fillText(lbl, x, y + 0.5);
+    }
+    /* Minor subdivision ticks between the labelled marks - like a VFO ruler.
+       Each labelled step is split into 4 equal parts so you get a small bar at
+       25/50/75 between the major numbers, giving a real ruler feel. Shorter and
+       dimmer than the major marks so they never fight the labels. */
+    var mStep = step / 4;                 /* 4 subdivisions per major cell */
+    var majorH = 5;                       /* length of a major tick on the top strip */
+    g.lineWidth = 1;
+    for (var mf = first; mf <= hi; mf += mStep) {
+      var rem = ((mf - first) % step) / step;      /* 0..1 within a major cell */
+      if (rem < 0.000001 || rem > 0.999999) continue;  /* that IS the major tick */
+      var tart = rem * (majorH - 1);               /* longer toward the major mark */
+      if (tart < 0) tart = 0;
+      var mx = ((mf - lo) / span) * W;
+      if (mx < 1 || mx > W - 1) continue;
+      g.strokeStyle = "rgba(160,185,210,.35)";
+      g.beginPath();
+      g.moveTo(mx + 0.5, 0);
+      g.lineTo(mx + 0.5, 1 + tart);
+      g.stroke();
     }
     g.restore();
     S.rulerLabels = labels;
@@ -3210,30 +3471,31 @@
       if (y > 0 && y < H) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
     });
 
-    g.beginPath();
-    g.moveTo(0, H);
-    var z0 = (n / 2) * (1 - 1 / (S.zoom > 1 ? S.zoom : 1)) + sliceOffsetBins(W, n);
-    var zs = n / (S.zoom > 1 ? S.zoom : 1);
-    /* Draw against the VISUAL centre so the trace follows the finger. This is a
-       single stable offset that shrinks to zero when the receiver confirms the new
-       centre, so the trace travels with the drag instead of lagging behind it and
-       then snapping - it never rocks, because the shift only ever converges. */
-    var sh = centreShiftPx(W);
-    dbg.shiftPx = Math.round(sh);
+        /* SAME window geometry as the waterfall, so line + picture can never disagree.
+       The slice is centred on the DIAL and anchored in the received frame at the
+       receiver's real centre (S.drawC): as the finger slides inside the delivered
+       bandwidth the offset pans the line across data that is already buffered -
+       instant follow, no radio round-trip, no lag, no "runs the opposite way". */
+var spanHz = visSpan() || (S.bw || 1) || 1;
+    /* Centre the visible slice on the DIAL (visCenterHz = S.freq). drawC stays the
+       receiver's real centre where the FFT data physically sits. The slice offset
+       (= dial - drawC) pans across the already-delivered frame as the finger moves,
+       so the line follows instantly inside the delivered bandwidth - no radio
+       round-trip, no waiting for fresh FFTs. This is the same anchor the waterfall
+       uses, so line + picture stay in lock-step and can never disagree. */
+    var c = visCenterHz() || (S.drawC || 0);
+    var bw = (S.bw || spanHz) || 1;
+    var fLo = 0.5 + (c - spanHz / 2 - (S.drawC || 0)) / bw;   /* frame-lhs as 0..1 */
+    var fW  = spanHz / bw;
+    var sx = Math.max(0, Math.round(fLo * n));
+    var sw = Math.max(1, Math.round(fW * n));
+    if (sx + sw > n) sx = Math.max(0, n - sw);
+
     drawBand(g, W, H);
-    /* interpolate the bin value at float index 'pos' - at deep zoom the FFT only
-       carries a few real bins in the window, so nearest-bin sampling shows up as
-       a blocky staircase. Blending the neighbour bins turns that into a smooth,
+    /* interpolate the bin value at float frame-index 'pos' - at deep zoom the FFT
+       only carries a few real bins in the window, so nearest-bin sampling shows up
+       as a blocky staircase. Blending the neighbour bins turns that into a smooth,
        sharp trace instead. */
-    function binAtf(x) {
-      var xx = x - sh;
-      /* Out beyond the delivered frame? Hold the EDGE bin rather than skipping the column:
-         skipping left a hole that only filled in when the receiver answered, which the owner
-         saw as part of the graph vanishing and then catching up. */
-      if (xx < 0) xx = 0;
-      if (xx >= W) xx = W - 1;
-      return z0 + (xx / W) * zs;
-    }
     function binVal(pos) {
       var i0 = Math.floor(pos), i1 = i0 + 1;
       if (i0 < 0) i0 = 0; if (i1 > n - 1) i1 = n - 1; if (i0 > n - 1) i0 = n - 1;
@@ -3241,7 +3503,8 @@
       return f[i0] * (1 - fr) + f[i1] * fr;
     }
     for (var x = 0; x < W; x++) {
-      var v = (binVal(binAtf(x)) - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
+      var pos = sx + (x / Math.max(1, W)) * sw;
+      var v = (binVal(pos) - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
       if (v < 0) v = 0; if (v > 1) v = 1;
       var y = H - v * (H - 2);
       if (x === 0) g.lineTo(0, y); else g.lineTo(x, y);
@@ -3254,7 +3517,8 @@
 
     g.beginPath();
     for (var x2 = 0; x2 < W; x2++) {
-      var v2 = (binVal(binAtf(x2)) - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
+      var pos2 = sx + (x2 / Math.max(1, W)) * sw;
+      var v2 = (binVal(pos2) - S.wfMin) / ((S.wfMax - S.wfMin) || 1);
       if (v2 < 0) v2 = 0; if (v2 > 1) v2 = 1;
       var y2 = H - v2 * (H - 2);
       if (x2 === 0) g.moveTo(0, y2); else g.lineTo(x2, y2);
@@ -3323,9 +3587,23 @@
      and blitted, so it costs one drawImage per frame. It uses the same visCenterHz() as
      everything else, so it travels with the finger. */
   function spRuler(W) {
-    var sig = W + "|" + Math.round(visCenterHz() || 0) + "|" + Math.round(visSpan() || 0) + "|" + (S.zoom || 1);
+    /* Key the cached ruler on the SPAN alone, not the centre. During a drag the
+       centre changes every pointer step; rebuilding here was what made the
+       "numbers on top" redraw every frame and hold the slide back. The ruler
+       is drawn at a fixed reference centre (S.rulerBase) and re-positioned by
+       offset in drawSpecRulerStrip() - so it only rebuilds when you zoom. */
+    var spanNow = Math.round(visSpan() || 0);
+    /* Key on the FRAME ANCHOR too (not just span). S.drawC only changes on a real
+       re-anchor - band/profile change, preset jump, or the receiver confirming a
+       move after release - never on a per-finger-step drag (that stays a pan of
+       the existing ruler, which is why it slides smoothly). Without drawC in the
+       key the ruler was drawn ONCE at the first centre and never rebuilt, so after
+       switching bands it kept labelling the OLD band's frequencies no matter how
+       you scrolled. Including it forces a rebuild exactly when the centre moves. */
+    var sig = W + "|" + spanNow + "|" + Math.round(S.drawC || visCenterHz() || 0);
     if (!S.spRulerCv || S.spRulerSig !== sig) {
       if (!S.spRulerCv) S.spRulerCv = document.createElement("canvas");
+      S.rulerBase = visCenterHz();            /* freeze the centre the labels were drawn at */
       var hh = 16;
       S.spRulerCv.width = W; S.spRulerCv.height = hh;
       var oc = S.spRulerCv.getContext("2d");
@@ -3364,11 +3642,20 @@
     g.clearRect(0, 0, W, H);
     g.fillStyle = "#04070c";
     g.fillRect(0, 0, W, H);
-    try { g.drawImage(spRuler(W), 0, 0); } catch (e) {}
-    g.strokeStyle = CENTRE_COLOUR;              /* red mark at the dial */
+    /* Draw the labels DIRECTLY from the dial every frame (drawRuler uses
+       visCenterHz() = the dial) - NO cached strip, NO modulo-wrap blit. The old
+       approach cached one strip and shifted it by (base - cur) % W, which WRAPPED
+       when the dial travelled more than one span: once past one ruler-width the
+       labels repeated back onto the same band and the ruler looked stuck / looping
+       while the frequency display kept counting. A handful of fillText calls per
+       frame is cheaper than the bug; it always shows the true frequency under the
+       dial, and when the dial leaves the received frame the numbers just march
+       (the waterfall blanks past the data edge, the ruler never lies). */
+    try { drawRuler(g, W, H, "top"); } catch (e) {}
+    g.strokeStyle = CENTRE_COLOUR;              /* red mark at the dial (screen centre) */
     g.lineWidth = 1.4;
     g.beginPath(); g.moveTo(W / 2, 0); g.lineTo(W / 2, H); g.stroke();
-    dbg.specRuler = { w: W, h: H, present: true };
+    dbg.specRuler = { w: W, h: H, present: true, dx: 0 };
   }
 
   /* Repaint what the user sees without inventing a new waterfall row - just
@@ -3429,21 +3716,21 @@
      receiver round-trips. This is what makes the waterfall track the finger. */
   function blitWaterfall() {
     if (!S.wctx || !S.hist || !S.water) return;
-    /* CRISP rendering: disable canvas smoothing. Bilinear upsampling was smearing
-       the signal columns into "ghosts" - the sharp vertical streaks washed out.
-       Nearest-neighbour here is a pure 1:1 cell scale, so peaks stay defined. At
-       deep zoom a narrow slice will show discrete cells (sharp, not blocky-blurred)
-       which is the honest FFT pixel - that reads clearly instead of ghosting. */
-    try { S.wctx.imageSmoothingEnabled = false; } catch (e) {}
     var bins = S.hist.width, W = S.water.width, H = S.water.height;
     var spanHz = visSpan() || (S.bw || 1) || 1;
-    var c = visCenterHz() || (S.center || 0);
+    var c = visCenterHz() || (S.drawC || 0);
     var bw = (S.bw || spanHz) || 1;
-    var fLo = 0.5 + (c - spanHz / 2 - (S.center || 0)) / bw;   /* frame-lhs as 0..1 */
+    var fLo = 0.5 + (c - spanHz / 2 - (S.drawC || 0)) / bw;   /* frame-lhs as 0..1 */
     var fW  = spanHz / bw;
     var sx = Math.max(0, Math.round(fLo * bins));
     var sw = Math.max(1, Math.round(fW * bins));
     if (sx + sw > bins) sx = Math.max(0, bins - sw);
+    /* ADAPTIVE scaling: smooth only when DOWNSCALING (zoomed out - kills the
+       stair-step pixel blocks), keep it sharp/nearest when UPSCALING (zoomed in -
+       no ghost smear). Global smoothing every frame was the "1980s / ghost"
+       waterfall. */
+    var scale = W / sw;                       /* screen px per source column */
+    try { S.wctx.imageSmoothingEnabled = (scale < 1); } catch (e) {}
     S.wctx.drawImage(S.hist, sx, 0, sw, H, 0, 0, W, H);
     S.wctx.save();
     S.wctx.strokeStyle = CENTRE_COLOUR;
@@ -3727,10 +4014,38 @@ function drawSmeter() {
     var off = el("sdrOffset");
     if (off) {
       off.value = String(S.smeterOffset);
+      /* Reference numbers under the cal slider: each position is a dBm the meter
+         will treat as "S9". The owner calibrates against a radio he knows is
+         accurate - when that radio reads S9 (-73 dBm), he drags the slider so its
+         live readout says -73 and locks it there. */
+      function drawCalRule() {
+        var r = el("sdrCalRule"); if (!r) return;
+        var ticks = [[-120,"-120"],[100,""],[-100,"-100"],[80,""],[-80,"-80"],
+                     [-73,"-73 S9"],[70,""],[-60,"-60"],[40,""],[-40,"-40"],
+                     [20,""],[-20,"-20"],[0,"0"]];
+        r.innerHTML = ticks.map(function (t) {
+          var x = (t[0] + 120) / 120 * 100;
+          var big = (Math.abs(t[0] - (-73)) < 1);
+          var lab = (t[1] === "" ? "" : (big ? "<big>" + t[1] + "</big>" : t[1]));
+          return '<b style="left:' + x.toFixed(2) + '%">' + lab + '</b>';
+        }).join("");
+        var cur = S.smeterOffset;
+        var elv = el("sdrCalRead");
+        if (elv) {
+          /* The offset is the dBm the meter now calls S9 (raw + offset, so at the
+             offset value the display reads S9). Show that, and which S-point that
+             is on the -73 dBm = S9 scale. */
+          var s = (cur <= -73) ? "S" + Math.max(0, Math.round((cur + 127) / 6))
+                               : "S9+" + (cur + 73);
+          elv.textContent = "S9 = " + cur.toFixed(0) + " dBm (" + s + ")";
+        }
+      }
+      drawCalRule();
       off.oninput = function () {
         S.smeterOffset = +off.value;
         try { localStorage.setItem("sdr_off", S.smeterOffset); } catch (e) {}
         drawSmeter();
+        drawCalRule();
       };
     }
 
@@ -3739,7 +4054,13 @@ function drawSmeter() {
       return '<button type="button" class="sband" data-hz="' + b[1] + '">' + b[0] + "</button>";
     }).join("");
     if (bands) bands.querySelectorAll(".sband").forEach(function (b) {
-      b.onclick = function () { setFreq(+b.dataset.hz, true); setMode("am", true); sheetToggle(false); };
+      b.onclick = function () { setFreq(+b.dataset.hz, true); setMode("am", true); sheetToggle(false);
+      /* a far band preset jump must re-anchor the frame at once, else zoomed-out
+         the picture keeps drawing the old band's water until fresh frames come */
+      if (S.drawC && Math.abs(S.freq - S.drawC) > Math.max(200000, (S.bw || 0) * 0.5)) {
+        S.drawC = S.freq; S.expectCenter = S.freq; resetWaterfall(); S.lastFft = null;
+      }
+    };
     });
 
     setModes(FALLBACK_MODES);

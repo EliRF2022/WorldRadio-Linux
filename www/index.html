@@ -621,7 +621,7 @@
       <p class="ld-tag">Live radio, HF receivers, aviation and weather — worldwide.</p>
       <div style="display:flex;align-items:center;gap:10px">
         <button id="ldSettings" title="Settings · Backup &amp; Restore" style="border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:12px;padding:8px 12px;font-size:16px;cursor:pointer">⚙️</button>
-        <span id="ldBuild" class="ld-ver">v2.1274</span>
+        <span id="ldBuild" class="ld-ver">v2.1311</span>
       </div>
     </div>
 
@@ -788,6 +788,23 @@
     min-width:78px;text-align:right;}
   .sdr-status{font-size:.72rem;color:#8a8f98;padding:8px 2px 0;}
   .sdr-status.ok{color:#00ff88;} .sdr-status.bad{color:#ff7b7b;}
+  .sdr-logrow{display:flex;align-items:center;gap:8px;padding:6px 2px;}
+  .sdr-logcount{font-size:.7rem;color:#8a8f98;}
+  .sdr-log{background:#0b0f14;border:1px solid #23303c;border-radius:6px;margin:4px 0 8px;
+           max-height:220px;display:flex;flex-direction:column;}
+  .sdr-log.hide{display:none;}
+  .sdr-loghead{display:flex;justify-content:space-between;align-items:center;
+               padding:6px 8px;border-bottom:1px solid #1b2530;font-size:.72rem;color:#c6d0d8;}
+  .sdr-logbtns{display:flex;gap:6px;}
+  .sdr-logbody{overflow-y:auto;padding:6px 8px;font-family:ui-monospace,Consolas,monospace;
+               font-size:.68rem;line-height:1.45;color:#aab4bf;white-space:pre-wrap;word-break:break-word;}
+  .sdr-logbody .l-t{color:#5c6670;} .sdr-logbody .l-ok{color:#00ff88;} .sdr-logbody .l-err{color:#ff7b7b;}
+  .sdr-logbody .l-warn{color:#ffcc55;} .sdr-logbody .l-info{color:#7fd6ff;}
+  .sdr-logpgbody{overflow-y:auto;padding:10px 12px;font-family:ui-monospace,Consolas,monospace;
+                 font-size:.72rem;line-height:1.5;color:#c3ccd6;white-space:pre-wrap;word-break:break-word;
+                 max-height:70vh;background:#0b0f14;border:1px solid #23303c;border-radius:8px;}
+  .sdr-logpgbtns{display:flex;gap:8px;justify-content:flex-end;padding:8px 4px 4px;}
+  .sdr-logrow .mini{font-size:11px;padding:3px 8px;}
   .sdr-keypad,.sdr-sheet{position:fixed;left:10px;right:10px;bottom:10px;z-index:40;
     background:#101722;border:1px solid #3a3f4a;border-radius:14px;padding:12px;
     box-shadow:0 18px 50px rgba(0,0,0,.6);}
@@ -816,6 +833,11 @@
   .sdr-row label{font-size:.72rem;color:#8a8f98;min-width:82px;}
   .sdr-row select{flex:1;min-width:0;background:#131a26;color:#e8f1fa;border:1px solid #3a3f4a;
     border-radius:8px;padding:8px;font-size:.8rem;}
+  .sdr-calrule{position:relative;margin:2px 0 4px 82px;padding-left:0;}
+  .sdr-calrule #sdrCalRule{position:relative;height:18px;margin:2px 0 0;}
+  .sdr-calrule #sdrCalRule b{position:absolute;top:0;transform:translateX(-50%);font-size:.6rem;color:#7c8490;white-space:nowrap;}
+  .sdr-calrule #sdrCalRule b big{color:#e8eef7;font-weight:700;}
+  .sdr-calread{font-size:.68rem;color:#00e5ff;margin-top:3px;text-align:left;}
   .sdr-row input[type=range]{flex:1;min-width:0;accent-color:#00e5ff;}
   .sdr-bands{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
   .sband{background:#1a2230;border:1px solid #2a2f3a;color:#cfe6ff;font-size:.72rem;
@@ -951,6 +973,36 @@
 
   <div id="sdrStatus" class="sdr-status">Not connected.</div>
 
+  <div class="sdr-logrow">
+    <button id="sdrLogBtn" class="mini" type="button">📋 Log</button>
+    <span id="sdrLogCount" class="sdr-logcount">0</span>
+  </div>
+  <div id="sdrLog" class="sdr-log hide">
+    <div class="sdr-loghead">
+      <b>Connection &amp; error log <span id="sdrLogHeadN"></span></b>
+      <span class="sdr-logbtns">
+        <button id="sdrLogCopy" class="mini" type="button">Copy</button>
+        <button id="sdrLogFull" class="mini" type="button">Full</button>
+        <button id="sdrLogClear" class="mini" type="button">Clear</button>
+        <button id="sdrLogClose" class="mini" type="button">Hide</button>
+      </span>
+      </div>
+      <div id="sdrLogBody" class="sdr-logbody"></div>
+      </div>
+
+      <!-- full-screen log page (press 🔍 in the log to open) -->
+      <div id="sdrLogPage" class="sdr-keypad hide">
+      <div class="sdr-keyhead">
+        <span>Full connection &amp; error log</span>
+        <button id="sdrLogPgClose" class="mini">✕</button>
+      </div>
+      <div class="sdr-logpgbtns">
+        <button id="sdrLogPgCopy" class="mini" type="button">Copy all</button>
+        <button id="sdrLogPgClear" class="mini" type="button">Clear</button>
+      </div>
+      <div id="sdrLogPgBody" class="sdr-logpgbody"></div>
+      </div>
+
   <div class="sdr-bottom">
     <button id="sdrMenuBtn2">☰ Menu</button>
   </div>
@@ -981,6 +1033,7 @@
     <div class="sdr-row"><label>Squelch</label><input id="sdrSquelch" type="range" min="-150" max="0" value="-150"></div>
     <div class="sdr-row"><label>Band / profile</label><select id="sdrProfiles"></select></div>
     <div class="sdr-row"><label>S-meter cal</label><input id="sdrOffset" type="range" min="-120" max="0" value="-71"></div>
+    <div class="sdr-calrule"><div id="sdrCalRule"></div><div id="sdrCalRead" class="sdr-calread">—</div></div>
     <div class="sdr-bands" id="sdrBands"></div>
   </div>
 </div>
@@ -1146,9 +1199,9 @@
 <div id="load"><div class="spinner"></div><span id="loadTxt">Loading stations…</span></div>
 <div id="hint" class="hint">drag to spin · pinch to zoom · tap a dot to listen</div>
 
-<script src="leaflet.js?v=2.1274"></script>
-<script src="three.min.js?v=2.1274"></script>
-<script src="satellite.min.js?v=2.1274"></script>
+<script src="leaflet.js?v=2.1311"></script>
+<script src="three.min.js?v=2.1311"></script>
+<script src="satellite.min.js?v=2.1311"></script>
 <script>
 /* =====================================================================
    Desktop bridge.
@@ -5704,7 +5757,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
 
 /* ---------- bottom navigation bar (handled by native Android) ---------- */
 </script>
-<script src="sdr_page.js?v=2.1274?v=2.1274"></script>
+<script src="sdr_page.js?v=2.1311?v=2.1311"></script>
 <script>
 /* fill the title-bar build tag from the version shown on the home page.
    Inline and display-neutral: it touches nothing the SDR page does. */
@@ -5933,7 +5986,7 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
   <video id="tvVideo" controls playsinline webkit-playsinline></video>
 </div>
 
-<script src="hls.min.js?v=2.1274"></script>
+<script src="hls.min.js?v=2.1311"></script>
 <script>
 /* ================= TV / IPTV =================================================
    Self-contained. Sources: an Xtream player_api/get.php URL (with username &
@@ -7347,6 +7400,86 @@ if ($('clearCache')) $('clearCache').onclick = clearCache;
     });
   }
   sync(typeof viewMode !== 'undefined' ? viewMode : 'home');
+})();
+/* ===================================================== connection log
+   In-memory ring buffer of connection/error events, time-stamped, shown in a
+   collapsible panel on the SDR page (📋 Log). Kept last ~300 lines of the session.
+   sdr_page.js calls window.wrLog(level, msg) with level in ok/err/warn/info. */
+(function () {
+  var ring = [];
+  var MAX = 300;
+  function fmt(t) {
+    var d = t ? new Date(t) : new Date();
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  function render() {
+    var body = document.getElementById("sdrLogBody");
+    var cnt = document.getElementById("sdrLogCount");
+    var head = document.getElementById("sdrLogHeadN");
+    if (body) {
+      body.innerHTML = rowsHtml();
+    }
+    if (cnt) cnt.textContent = ring.length;
+    if (head) head.textContent = ring.length ? ("· " + ring.length) : "";
+    var pg = document.getElementById("sdrLogPgBody");
+    if (pg && !pg.classList.contains("hide")) pg.innerHTML = rowsHtml();
+  }
+  function rowsHtml() {
+    var html = "";
+    for (var i = 0; i < ring.length; i++) {
+      var e = ring[i];
+      html += '<div><span class="l-t">' + e.t + "</span> <span class=\"l-" + e.lvl + '">' +
+              esc(e.m) + "</span></div>";
+    }
+    return html || '<div class="l-info">(no events yet)</div>';
+  }
+  function copyLog() {
+    try {
+      var txt = window.__wrLogText();
+      if (!txt) { try { window.__wrLogToClipboard("Log is empty."); } catch (e) {} return; }
+      window.__wrLogToClipboard(txt);
+    } catch (e) {}
+  }
+  window.__wrLogText = function () {
+    var parts = [];
+    for (var i = 0; i < ring.length; i++) parts.push(ring[i].t + "  [" + ring[i].lvl + "]  " + ring[i].m);
+    return parts.join("\n");
+  };
+  window.__wrLogToClipboard = function (txt) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(txt); return; }
+    } catch (e) {}
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch (e2) {}
+      document.body.removeChild(ta);
+    } catch (e3) {}
+  };
+  window.__wrLogFull = function () { var el = document.getElementById("sdrLogPage"); var body = document.getElementById("sdrLogPgBody"); if (body) body.innerHTML = rowsHtml(); if (el) el.classList.toggle("hide"); };
+  window.__wrLogToggle = function () { var el = document.getElementById("sdrLog"); if (el) el.classList.toggle("hide"); render(); };
+  window.__wrLogClear = function () { ring.length = 0; render(); };
+  function wire() {
+    var b = document.getElementById("sdrLogBtn");
+    var c = document.getElementById("sdrLogClear");
+    var x = document.getElementById("sdrLogClose");
+    var cp = document.getElementById("sdrLogCopy");
+    var fl = document.getElementById("sdrLogFull");
+    var pgc = document.getElementById("sdrLogPgClose");
+    var pgcp = document.getElementById("sdrLogPgCopy");
+    var pgcl = document.getElementById("sdrLogPgClear");
+    if (b) b.onclick = function () { window.__wrLogToggle(); };
+    if (c) c.onclick = function () { window.__wrLogClear(); };
+    if (x) x.onclick = function () { window.__wrLogToggle(); };
+    if (cp) cp.onclick = function () { copyLog(); };
+    if (fl) fl.onclick = function () { window.__wrLogFull(); };
+    if (pgc) pgc.onclick = function () { window.__wrLogFull(); };
+    if (pgcp) pgcp.onclick = function () { try { copyLog(); } catch (e) {} };
+    if (pgcl) pgcl.onclick = function () { window.__wrLogClear(); if (document.getElementById("sdrLogPgBody")) document.getElementById("sdrLogPgBody").innerHTML = ""; };
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire); else wire();
 })();
 </script>
 
